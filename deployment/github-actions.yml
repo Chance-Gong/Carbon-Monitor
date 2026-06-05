@@ -1,0 +1,93 @@
+# GitHub Actions Workflow for Carbon PR Review
+# Place this file in .github/workflows/carbon-pr-review.yml
+
+name: Carbon PR Review
+
+on:
+  # Run on schedule (every 6 hours)
+  schedule:
+    - cron: '0 */6 * * *'
+  
+  # Allow manual trigger
+  workflow_dispatch:
+  
+  # Run on push to main (for testing)
+  push:
+    branches:
+      - main
+    paths:
+      - 'carbon-pr-review/**'
+
+jobs:
+  review-prs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: carbon-pr-review/package-lock.json
+    
+    - name: Install dependencies
+      working-directory: carbon-pr-review
+      run: npm ci
+    
+    - name: Install Bob Shell CLI
+      if: ${{ secrets.GITHUB_AI_AGENT_CLI == 'bob' }}
+      run: npm install -g @ibm/bob-shell
+    
+    - name: Install Claude CLI
+      if: ${{ secrets.GITHUB_AI_AGENT_CLI == 'claude' }}
+      run: npm install -g @anthropic-ai/claude-cli
+    
+    - name: Install Codex CLI
+      if: ${{ secrets.GITHUB_AI_AGENT_CLI == 'codex' }}
+      run: npm install -g openai-codex-cli
+    
+    - name: Run PR Review Agent
+      working-directory: carbon-pr-review
+      env:
+        GITHUB_AI_AGENT_TOKEN: ${{ secrets.GITHUB_AI_AGENT_TOKEN }}
+        GITHUB_AI_AGENT_CLI: ${{ secrets.GITHUB_AI_AGENT_CLI }}
+        BOBSHELL_API_KEY: ${{ secrets.BOBSHELL_API_KEY }}
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        GITHUB_AI_AGENT_OWNER: ${{ secrets.GITHUB_AI_AGENT_OWNER || 'carbon-design-system' }}
+        GITHUB_AI_AGENT_REPO: ${{ secrets.GITHUB_AI_AGENT_REPO || 'carbon' }}
+        GITHUB_AI_AGENT_MAX_PRS: ${{ secrets.GITHUB_AI_AGENT_MAX_PRS || '5' }}
+        GITHUB_AI_AGENT_DAYS_BACK: ${{ secrets.GITHUB_AI_AGENT_DAYS_BACK || '21' }}
+        GITHUB_AI_AGENT_REVIEW_LABEL: ${{ secrets.GITHUB_AI_AGENT_REVIEW_LABEL || 'AIReviewed' }}
+      run: npm start
+    
+    - name: Upload logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: review-logs
+        path: carbon-pr-review/*.log
+        retention-days: 7
+
+  notify-on-failure:
+    runs-on: ubuntu-latest
+    needs: review-prs
+    if: failure()
+    
+    steps:
+    - name: Send notification
+      uses: actions/github-script@v7
+      with:
+        script: |
+          github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: '🚨 Carbon PR Review Failed',
+            body: `The Carbon PR review workflow failed. Check the [workflow run](${context.payload.repository.html_url}/actions/runs/${context.runId}) for details.`,
+            labels: ['bug', 'automation']
+          })
+
+# Made with Bob

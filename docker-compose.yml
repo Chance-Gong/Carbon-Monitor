@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  carbon-pr-review:
+    build: .
+    container_name: carbon-pr-review
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - TMPDIR=/tmp/pr-reviews
+    volumes:
+      # Mount .env file for configuration
+      - ./.env:/app/.env:ro
+      # Mount temp directory for review bundles
+      - pr-reviews-tmp:/tmp/pr-reviews
+    networks:
+      - carbon-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  pr-reviews-tmp:
+    driver: local
+
+networks:
+  carbon-network:
+    driver: bridge
+
+# Made with Bob

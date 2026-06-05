@@ -1,0 +1,182 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: carbon-pr-review
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: carbon-pr-review-secrets
+  namespace: carbon-pr-review
+type: Opaque
+stringData:
+  GITHUB_AI_AGENT_TOKEN: "REPLACE_WITH_YOUR_TOKEN"
+  GITHUB_AI_AGENT_CLI: "bob"
+  BOBSHELL_API_KEY: "REPLACE_WITH_YOUR_KEY"
+  ANTHROPIC_API_KEY: "REPLACE_WITH_YOUR_KEY"
+  GITHUB_AI_AGENT_OWNER: "carbon-design-system"
+  GITHUB_AI_AGENT_REPO: "carbon"
+  GITHUB_AI_AGENT_MAX_PRS: "5"
+  GITHUB_AI_AGENT_DAYS_BACK: "21"
+  GITHUB_AI_AGENT_REVIEW_LABEL: "AIReviewed"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: carbon-pr-review
+  namespace: carbon-pr-review
+  labels:
+    app: carbon-pr-review
+    version: v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: carbon-pr-review
+  template:
+    metadata:
+      labels:
+        app: carbon-pr-review
+        version: v1
+    spec:
+      serviceAccountName: carbon-pr-review
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      containers:
+      - name: carbon-pr-review
+        image: carbon-pr-review:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: TMPDIR
+          value: "/tmp/pr-reviews"
+        envFrom:
+        - secretRef:
+            name: carbon-pr-review-secrets
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp/pr-reviews
+        livenessProbe:
+          exec:
+            command:
+            - node
+            - -e
+            - "console.log('healthy')"
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - node
+            - -e
+            - "console.log('ready')"
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+      volumes:
+      - name: tmp
+        emptyDir:
+          sizeLimit: 1Gi
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: carbon-pr-review
+  namespace: carbon-pr-review
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: carbon-pr-review-cron
+  namespace: carbon-pr-review
+spec:
+  schedule: "0 */6 * * *"  # Every 6 hours
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app: carbon-pr-review
+            job: cron
+        spec:
+          serviceAccountName: carbon-pr-review
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            fsGroup: 1001
+          containers:
+          - name: carbon-pr-review
+            image: carbon-pr-review:latest
+            imagePullPolicy: IfNotPresent
+            env:
+            - name: NODE_ENV
+              value: "production"
+            - name: TMPDIR
+              value: "/tmp/pr-reviews"
+            envFrom:
+            - secretRef:
+                name: carbon-pr-review-secrets
+            resources:
+              requests:
+                memory: "512Mi"
+                cpu: "250m"
+              limits:
+                memory: "1Gi"
+                cpu: "500m"
+            volumeMounts:
+            - name: tmp
+              mountPath: /tmp/pr-reviews
+          volumes:
+          - name: tmp
+            emptyDir:
+              sizeLimit: 1Gi
+          restartPolicy: OnFailure
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: carbon-pr-review-config
+  namespace: carbon-pr-review
+data:
+  README.md: |
+    # Carbon PR Review Kubernetes Deployment
+    
+    ## Quick Start
+    
+    1. Update secrets in carbon-pr-review-secrets
+    2. Apply configuration: kubectl apply -f kubernetes.yml
+    3. Check status: kubectl get pods -n carbon-pr-review
+    4. View logs: kubectl logs -f deployment/carbon-pr-review -n carbon-pr-review
+    
+    ## Components
+    
+    - Namespace: carbon-pr-review
+    - Secret: carbon-pr-review-secrets (GitHub token, API keys)
+    - Deployment: carbon-pr-review (main application)
+    - CronJob: carbon-pr-review-cron (scheduled reviews every 6 hours)
+    - ServiceAccount: carbon-pr-review
+    
+    ## Scaling
+    
+    Manual: kubectl scale deployment carbon-pr-review --replicas=2 -n carbon-pr-review
+    Auto: kubectl autoscale deployment carbon-pr-review --cpu-percent=80 --min=1 --max=3 -n carbon-pr-review
+
+# Made with Bob

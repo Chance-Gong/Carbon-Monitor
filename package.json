@@ -1,0 +1,29 @@
+{
+  "name": "carbon-pr-review",
+  "version": "1.0.0",
+  "description": "AI-powered PR review agent for Carbon Design System",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node tests/test-agent.js",
+    "test:parser": "node tests/test-parser.js",
+    "test:diff": "node tests/test-diff-mapper.js",
+    "test:all": "node tests/test-parser.js && node tests/test-diff-mapper.js"
+  },
+  "keywords": [
+    "carbon",
+    "design-system",
+    "pr-review",
+    "ai",
+    "github"
+  ],
+  "author": "IBM",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@octokit/rest": "^20.0.2",
+    "dotenv": "^16.3.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
