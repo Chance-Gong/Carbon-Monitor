@@ -11,7 +11,7 @@ Get the Carbon PR review agent running in 5 minutes!
 ## Step 1: Install Dependencies
 
 ```bash
-cd carbon-pr-review
+cd Carbon-PR-Review-Agent
 npm install
 ```
 

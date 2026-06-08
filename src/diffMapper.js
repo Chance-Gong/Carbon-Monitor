@@ -103,12 +103,11 @@ function mapFindingToDiffPosition(finding, diff, files) {
     }
   }
   
-  // For new files in PRs, GitHub's position parameter actually expects
-  // the file line number, not the diff position
-  // This is different from modified files where diff positions are used
+  // For new files or files with additions, GitHub API uses line numbers
+  // Return the line number directly - GitHub will map it to the diff
   return {
     path: matchedFilename,
-    position: finding.line,  // Use file line number directly
+    line: finding.line,  // Use file line number
     side: 'RIGHT'
   };
 }

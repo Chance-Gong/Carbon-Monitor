@@ -74,7 +74,31 @@ async function reviewPRs() {
     return;
   }
   
-  console.log(`✅ Agent '${agent}' is available\n`);
+  console.log(`✅ Agent '${agent}' is available`);
+  
+  // Check if Carbon Builder MCP server is available
+  console.log('🔍 Checking Carbon Builder MCP server...');
+  const { spawn } = require('child_process');
+  const carbonBuilderAvailable = await new Promise((resolve) => {
+    const proc = spawn('npx', ['-y', '@carbon/mcp-server', '--version'], {
+      stdio: 'ignore'
+    });
+    proc.on('close', (code) => resolve(code === 0));
+    proc.on('error', () => resolve(false));
+    setTimeout(() => {
+      proc.kill();
+      resolve(false);
+    }, 10000);
+  });
+  
+  if (carbonBuilderAvailable) {
+    console.log('✅ Carbon Builder MCP server is available');
+  } else {
+    console.warn('⚠️  Carbon Builder MCP server not found');
+    console.warn('   The agent will have limited Carbon verification capabilities');
+    console.warn('   Install with: npm install -g @carbon/mcp-server');
+  }
+  console.log('');
   
   // Create GitHub client
   const { Octokit } = await import('@octokit/rest');
@@ -183,7 +207,7 @@ async function reviewPRs() {
           
           const inlineComments = inlineFindings.map(finding => ({
             path: finding.diffPosition.path,
-            position: finding.diffPosition.position,
+            line: finding.diffPosition.line,
             body: formatInlineComment(finding)
           }));
           

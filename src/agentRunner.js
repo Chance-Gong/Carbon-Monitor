@@ -32,6 +32,15 @@ async function runAgent({ agent, cwd, prompt, timeout = 5 * 60 * 1000 }) {
       delete env.BOBSHELL_API_KEY;
     }
 
+    // Set MCP config paths for each agent to use the bundle's config
+    if (agent === 'bob') {
+      env.BOB_MCP_CONFIG = `${cwd}/.bob/mcp.json`;
+    } else if (agent === 'claude') {
+      env.CLAUDE_MCP_CONFIG = `${cwd}/.claude/mcp_config.json`;
+    } else if (agent === 'codex') {
+      env.CODEX_MCP_CONFIG = `${cwd}/.codex/mcp_config.json`;
+    }
+
     let stdout = '';
     let stderr = '';
 

@@ -41,6 +41,8 @@ carbon-pr-review/
    - **Claude** - Works anywhere (requires `ANTHROPIC_API_KEY`)
    - **Codex** - Alternative option
 
+**Note:** Carbon Builder MCP server integration is configured but the `@carbon/mcp-server` package does not currently exist. See [`docs/CARBON_VERIFICATION_STATUS.md`](docs/CARBON_VERIFICATION_STATUS.md) for details.
+
 ## Installation
 
 1. Clone or copy this directory to your system
@@ -196,18 +198,38 @@ This PR introduces new Carbon components with accessibility improvements...
 
 ## Carbon Verification
 
-The agent automatically filters findings that make Carbon-specific claims without verification:
+⚠️ **Current Status:** The agent is configured for Carbon Builder MCP server integration, but **`@carbon/mcp-server` does not currently exist as a published package**.
 
-**Verified Sources:**
-- `carbon_builder` - Verified using Carbon Builder tool
-- `carbon_mcp` - Verified using Carbon MCP server
+### What This Means
 
-**Filtered Claims:**
-- Mentions Carbon components without verification
-- References Carbon tokens without verification
-- Suggests Carbon patterns without verification
+- ✅ **Infrastructure Ready**: MCP configuration files are created for each review
+- ✅ **Filtering Active**: Unverified Carbon claims are filtered out
+- ❌ **No Real Verification**: Agents cannot actually verify Carbon claims yet
+- 🔮 **Future-Ready**: Ready for when Carbon MCP server is built
 
-This ensures all Carbon-specific feedback is accurate and trustworthy.
+### Current Behavior
+
+The agent will:
+1. Create MCP configuration files in review bundles
+2. Instruct agents to verify Carbon claims
+3. Filter out unverified Carbon-specific findings
+4. Only post generic code quality findings
+
+### Workaround for Testing
+
+To allow unverified findings through (testing only):
+
+```bash
+GITHUB_AI_AGENT_SKIP_CARBON_FILTER=true npm start
+```
+
+### Full Details
+
+See [`docs/CARBON_VERIFICATION_STATUS.md`](docs/CARBON_VERIFICATION_STATUS.md) for:
+- Current limitations
+- What needs to be built
+- Recommended path forward
+- How to test without Carbon MCP
 
 ## Comparison to Original A11y System
 

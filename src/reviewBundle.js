@@ -105,10 +105,46 @@ Mandatory:
       rules
     );
 
+    // Configure Carbon Builder MCP server for Codex
+    const codexMcpConfig = {
+      mcpServers: {
+        carbon: {
+          command: 'npx',
+          args: ['-y', '@carbon/mcp-server']
+        }
+      }
+    };
+    
+    // Codex looks for config in .codex directory
+    const codexConfigDir = path.join(tempDir, '.codex');
+    await fs.mkdir(codexConfigDir, { recursive: true });
+    await fs.writeFile(
+      path.join(codexConfigDir, 'mcp_config.json'),
+      JSON.stringify(codexMcpConfig, null, 2)
+    );
+
     // Write for Claude
     await fs.writeFile(
       path.join(tempDir, 'CLAUDE.md'),
       rules
+    );
+
+    // Configure Carbon Builder MCP server for Claude
+    const claudeMcpConfig = {
+      mcpServers: {
+        carbon: {
+          command: 'npx',
+          args: ['-y', '@carbon/mcp-server']
+        }
+      }
+    };
+    
+    // Claude looks for config in .claude directory
+    const claudeConfigDir = path.join(tempDir, '.claude');
+    await fs.mkdir(claudeConfigDir, { recursive: true });
+    await fs.writeFile(
+      path.join(claudeConfigDir, 'mcp_config.json'),
+      JSON.stringify(claudeMcpConfig, null, 2)
     );
 
     // Write for Bob
@@ -117,6 +153,44 @@ Mandatory:
     await fs.writeFile(
       path.join(bobRulesDir, '01-output.md'),
       rules
+    );
+
+    // Configure Carbon Builder MCP server for Bob
+    const bobMcpConfig = {
+      mcpServers: {
+        carbon: {
+          command: 'npx',
+          args: ['-y', '@carbon/mcp-server'],
+          env: {}
+        }
+      }
+    };
+    
+    await fs.writeFile(
+      path.join(tempDir, '.bob', 'mcp.json'),
+      JSON.stringify(bobMcpConfig, null, 2)
+    );
+
+    // Also create a skills configuration for Carbon Builder
+    const bobSkillsDir = path.join(tempDir, '.bob', 'skills');
+    await fs.mkdir(bobSkillsDir, { recursive: true });
+    
+    const carbonBuilderSkill = {
+      name: 'carbon-builder',
+      description: 'Carbon Design System verification and documentation tool',
+      version: '1.0.0',
+      mcp_server: 'carbon',
+      tools: [
+        'search_carbon_docs',
+        'get_component_info',
+        'verify_carbon_pattern',
+        'check_accessibility'
+      ]
+    };
+    
+    await fs.writeFile(
+      path.join(bobSkillsDir, 'carbon-builder.json'),
+      JSON.stringify(carbonBuilderSkill, null, 2)
     );
 
     // 6. Create review prompt
