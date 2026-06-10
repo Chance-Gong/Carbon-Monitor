@@ -103,13 +103,27 @@ function mapFindingToDiffPosition(finding, diff, files) {
     }
   }
   
-  // For new files in PRs, GitHub's position parameter actually expects
-  // the file line number, not the diff position
-  // This is different from modified files where diff positions are used
+  // Parse diff to get line-to-position mappings
+  const fileMap = parseDiffLinePositions(diff);
+  const lineMap = fileMap.get(matchedFilename);
+  
+  if (!lineMap) {
+    // File not found in diff (shouldn't happen if file is in changed files)
+    return null;
+  }
+  
+  // Look up the diff position for this line number
+  const diffPosition = lineMap.get(finding.line);
+  
+  if (!diffPosition) {
+    // Line not found in diff - it's an unchanged line or outside the diff context
+    return null;
+  }
+  
+  // Return the actual diff position
   return {
     path: matchedFilename,
-    position: finding.line,  // Use file line number directly
-    side: 'RIGHT'
+    position: diffPosition  // Use actual diff position
   };
 }
 

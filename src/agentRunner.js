@@ -7,10 +7,10 @@ const { spawn } = require('child_process');
  * @param {string} options.agent - Agent type: 'bob', 'claude', or 'codex'
  * @param {string} options.cwd - Working directory for the agent
  * @param {string} options.prompt - Prompt to send to the agent
- * @param {number} [options.timeout=300000] - Timeout in milliseconds (default: 5 minutes)
+ * @param {number} [options.timeout=600000] - Timeout in milliseconds (default: 10 minutes)
  * @returns {Promise<string>} - Agent output
  */
-async function runAgent({ agent, cwd, prompt, timeout = 5 * 60 * 1000 }) {
+async function runAgent({ agent, cwd, prompt, timeout = 10 * 60 * 1000 }) {
   // Validate agent type
   const validAgents = ['bob', 'claude', 'codex'];
   if (!validAgents.includes(agent)) {
@@ -75,14 +75,13 @@ async function runAgent({ agent, cwd, prompt, timeout = 5 * 60 * 1000 }) {
         args = ['exec', '--full-auto', prompt];
         break;
     }
-
-    console.log(`🤖 Running ${agent} agent...`);
     
-    // Spawn the process
+    // Spawn the process with increased timeout for MCP server startup
     const proc = spawn(command, args, {
       cwd,
       env,
-      shell: false
+      shell: false,
+      // Note: spawn doesn't have a timeout option, we handle it manually below
     });
 
     // Capture stdout

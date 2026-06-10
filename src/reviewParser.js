@@ -1,61 +1,100 @@
 /**
  * Parse and validate structured JSON review output from AI agents
- * Filters Carbon-specific claims that lack proper verification
+ * STRICTLY filters Carbon-specific claims that lack proper carbon-mcp verification
  */
 
 /**
  * Check if a finding appears to be Carbon Design System specific
- * 
+ *
  * @param {Object} finding - Review finding object
  * @returns {boolean} - True if finding mentions Carbon-specific terms
  */
 function looksCarbonSpecific(finding) {
   const text = `${finding.title} ${finding.body} ${finding.file}`.toLowerCase();
-  return /carbon|@carbon|cds-|bx-|token|scss|icon|component|design system/.test(text);
+  
+  // Carbon-specific patterns that require verification
+  const carbonPatterns = [
+    /@carbon\//,           // @carbon/react, @carbon/icons-react, etc.
+    /\$[a-z]+-\d+/,        // Carbon tokens like $spacing-05, $layer-01
+    /carbon design system/,
+    /carbon component/,
+    /carbon token/,
+    /carbon icon/,
+    /ibm-products/,
+    /cds-[a-z]/,           // Carbon class prefixes
+    /bx-[a-z]/,            // Legacy Carbon class prefixes
+  ];
+  
+  // Check if any Carbon-specific pattern matches
+  return carbonPatterns.some(pattern => pattern.test(text));
 }
 
 /**
  * Filter out unverified Carbon-specific findings
- * 
+ * STRICT ENFORCEMENT: Carbon claims MUST be verified via carbon-mcp
+ *
  * @param {Array} findings - Array of finding objects
- * @returns {Array} - Filtered findings with only verified Carbon claims
+ * @returns {Object} - { filtered: Array, stats: Object }
  */
 function filterUnverifiedCarbonFindings(findings) {
   // Skip filter if testing mode is enabled
   if (process.env.GITHUB_AI_AGENT_SKIP_CARBON_FILTER === 'true') {
     console.log('⚠️  Carbon verification filter DISABLED (test mode)');
-    return findings;
+    return { filtered: findings, stats: { total: findings.length, filtered: 0, carbonVerified: 0 } };
   }
   
-  return findings.filter((finding) => {
+  let carbonSpecificCount = 0;
+  let carbonVerifiedCount = 0;
+  let filteredCount = 0;
+  
+  const filtered = findings.filter((finding) => {
     // Non-Carbon-specific findings are always allowed
     if (!looksCarbonSpecific(finding)) {
       return true;
     }
     
-    // Carbon-specific findings must be verified
+    carbonSpecificCount++;
+    
+    // STRICT: Carbon-specific findings MUST have carbon-mcp verification
     const hasVerification = finding.carbonVerified === true &&
-      ['carbon-builder', 'carbon-mcp'].includes(finding.verificationSource);
+      finding.verificationSource === 'carbon-mcp';
     
-    // TEMPORARY FALLBACK: Allow Carbon findings with detailed documentation references
-    // This allows findings through while we debug why Carbon Builder isn't being used
-    const hasDetailedReference = finding.body && (
-      finding.body.includes('Carbon documentation') ||
-      finding.body.includes('Carbon Design System') ||
-      finding.body.includes('@carbon/') ||
-      /carbondesignsystem\.com/.test(finding.body) ||
-      finding.body.length > 100 // Detailed findings are likely researched
-    );
-    
-    if (hasDetailedReference && !hasVerification) {
-      console.log(`⚠️  Allowing Carbon finding with detailed reference (fallback): ${finding.title}`);
-      // Mark it as verified via fallback
-      finding.carbonVerified = true;
-      finding.verificationSource = 'detailed-reference-fallback';
+    if (hasVerification) {
+      carbonVerifiedCount++;
+      console.log(`✅ Carbon finding verified via carbon-mcp: ${finding.title}`);
+      return true;
     }
     
-    return hasVerification || hasDetailedReference;
+    // REJECT: Unverified Carbon claims are not allowed
+    filteredCount++;
+    console.log(`❌ FILTERED unverified Carbon finding: ${finding.title}`);
+    console.log(`   Reason: carbonVerified=${finding.carbonVerified}, verificationSource=${finding.verificationSource}`);
+    return false;
   });
+  
+  // Log summary
+  if (carbonSpecificCount > 0) {
+    console.log(`\n📊 Carbon Verification Summary:`);
+    console.log(`   Total findings: ${findings.length}`);
+    console.log(`   Carbon-specific: ${carbonSpecificCount}`);
+    console.log(`   Verified via carbon-mcp: ${carbonVerifiedCount}`);
+    console.log(`   Filtered (unverified): ${filteredCount}`);
+    
+    if (filteredCount > 0) {
+      console.log(`\n⚠️  ${filteredCount} Carbon finding(s) were filtered due to missing carbon-mcp verification`);
+      console.log(`   To fix: Ensure Bob calls carbon-mcp MCP tools before making Carbon claims`);
+    }
+  }
+  
+  return {
+    filtered,
+    stats: {
+      total: findings.length,
+      carbonSpecific: carbonSpecificCount,
+      carbonVerified: carbonVerifiedCount,
+      filtered: filteredCount
+    }
+  };
 }
 
 /**
@@ -258,14 +297,12 @@ function parseReviewOutput(agentOutput) {
       }
     }
     
-    // Filter unverified Carbon findings
-    const originalCount = review.findings.length;
-    review.findings = filterUnverifiedCarbonFindings(review.findings);
-    const filteredCount = originalCount - review.findings.length;
+    // Filter unverified Carbon findings with strict enforcement
+    const filterResult = filterUnverifiedCarbonFindings(review.findings);
+    review.findings = filterResult.filtered;
     
-    if (filteredCount > 0) {
-      console.log(`🔍 Filtered ${filteredCount} unverified Carbon-specific finding(s)`);
-    }
+    // Store verification stats for reporting
+    review.verificationStats = filterResult.stats;
     
     return review;
     

@@ -1,75 +1,25 @@
 #!/usr/bin/env node
 /**
- * Create Test PR from Carbon PR
+ * Create Test PR in carbon-pr-review-test Repository
  * 
- * This script helps you create a test PR in your own repository
- * based on a Carbon PR, so you can run the review agent locally
- * and see comments/reviews without affecting the Carbon repository.
+ * This script creates a test PR in Chance-Gong/carbon-pr-review-test
+ * based on a Carbon PR, so you can run the review agent locally.
  * 
  * Usage:
  *   node examples/create-test-pr.js <CARBON_PR_NUMBER>
  * 
- * What it does:
- * 1. Fetches the Carbon PR diff
- * 2. Creates a new branch in your local repo
- * 3. Applies the changes from the Carbon PR
- * 4. Pushes to your GitHub repository
- * 5. Creates a PR in your repo
- * 6. You can then run the review agent on YOUR PR
+ * Example:
+ *   node examples/create-test-pr.js 22425
  */
 
 require('dotenv').config();
 const { Octokit } = require('@octokit/rest');
 const { createGitHubClient } = require('../src/githubClient');
-const { execSync } = require('child_process');
-const fs = require('fs');
-const path = require('path');
 
 const CARBON_OWNER = 'carbon-design-system';
 const CARBON_REPO = 'carbon';
-
-/**
- * Execute a git command
- */
-function git(command) {
-  try {
-    const result = execSync(`git ${command}`, { 
-      encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe']
-    });
-    return result.trim();
-  } catch (error) {
-    throw new Error(`Git command failed: ${command}\n${error.message}`);
-  }
-}
-
-/**
- * Check if we're in a git repository
- */
-function isGitRepo() {
-  try {
-    git('rev-parse --git-dir');
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Get current git remote
- */
-function getRemoteInfo() {
-  try {
-    const remoteUrl = git('config --get remote.origin.url');
-    const match = remoteUrl.match(/github\.com[:/]([^/]+)\/([^/.]+)/);
-    if (match) {
-      return { owner: match[1], repo: match[2] };
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
+const TEST_OWNER = 'Chance-Gong';
+const TEST_REPO = 'carbon-pr-review-test';
 
 /**
  * Create a test PR from a Carbon PR
@@ -84,22 +34,7 @@ async function createTestPR(carbonPRNumber) {
     process.exit(1);
   }
 
-  // Check if we're in a git repo
-  if (!isGitRepo()) {
-    console.error('❌ Error: Not in a git repository');
-    console.error('   Please run this from your git repository root');
-    process.exit(1);
-  }
-
-  // Get remote info
-  const remote = getRemoteInfo();
-  if (!remote) {
-    console.error('❌ Error: Could not determine GitHub repository');
-    console.error('   Make sure you have a GitHub remote configured');
-    process.exit(1);
-  }
-
-  console.log(`📍 Your repository: ${remote.owner}/${remote.repo}\n`);
+  console.log(`📍 Target repository: ${TEST_OWNER}/${TEST_REPO}\n`);
 
   // Create GitHub client
   const octokit = new Octokit({
@@ -136,54 +71,60 @@ async function createTestPR(carbonPRNumber) {
     });
     console.log(`   ✅ ${files.length} files changed\n`);
 
-    // Step 4: Create branch
+    // Step 4: Get default branch of test repo
+    console.log('� Step 4: Getting test repository info...');
+    const { data: testRepo } = await octokit.rest.repos.get({
+      owner: TEST_OWNER,
+      repo: TEST_REPO
+    });
+    const baseBranch = testRepo.default_branch;
+    console.log(`   ✅ Base branch: ${baseBranch}\n`);
+
+    // Step 5: Get base branch SHA
+    console.log('🔍 Step 5: Getting base branch SHA...');
+    const { data: baseRef } = await octokit.rest.git.getRef({
+      owner: TEST_OWNER,
+      repo: TEST_REPO,
+      ref: `heads/${baseBranch}`
+    });
+    const baseSha = baseRef.object.sha;
+    console.log(`   ✅ Base SHA: ${baseSha.substring(0, 7)}\n`);
+
+    // Step 6: Create new branch
     const branchName = `test-carbon-pr-${carbonPRNumber}`;
-    console.log(`🌿 Step 4: Creating branch '${branchName}'...`);
+    console.log(`🌿 Step 6: Creating branch '${branchName}'...`);
     
     try {
-      // Make sure we're on main/master
-      const currentBranch = git('rev-parse --abbrev-ref HEAD');
-      if (currentBranch !== 'main' && currentBranch !== 'master') {
-        console.log(`   ⚠️  Currently on '${currentBranch}', switching to main...`);
-        try {
-          git('checkout main');
-        } catch {
-          git('checkout master');
-        }
-      }
-      
-      // Delete branch if it exists
+      // Try to delete existing branch first
       try {
-        git(`branch -D ${branchName}`);
+        await octokit.rest.git.deleteRef({
+          owner: TEST_OWNER,
+          repo: TEST_REPO,
+          ref: `heads/${branchName}`
+        });
         console.log(`   🗑️  Deleted existing branch`);
       } catch {
         // Branch doesn't exist, that's fine
       }
-      
+
       // Create new branch
-      git(`checkout -b ${branchName}`);
-      console.log(`   ✅ Created and switched to '${branchName}'\n`);
+      await octokit.rest.git.createRef({
+        owner: TEST_OWNER,
+        repo: TEST_REPO,
+        ref: `refs/heads/${branchName}`,
+        sha: baseSha
+      });
+      console.log(`   ✅ Created branch '${branchName}'\n`);
     } catch (error) {
       console.error(`   ❌ Error creating branch: ${error.message}`);
       process.exit(1);
     }
 
-    // Step 5: Save diff to file
-    console.log('💾 Step 5: Saving diff to file...');
-    const diffPath = path.join(process.cwd(), 'carbon-pr-diff.patch');
-    fs.writeFileSync(diffPath, diff);
-    console.log(`   ✅ Saved to: ${diffPath}\n`);
+    // Step 7: Create test files
+    console.log('📝 Step 7: Creating test files...');
 
-    // Step 6: Create test files
-    console.log('📝 Step 6: Creating test files...');
-    const testDir = path.join(process.cwd(), 'carbon-pr-test');
-    if (!fs.existsSync(testDir)) {
-      fs.mkdirSync(testDir, { recursive: true });
-    }
-
-    // Create a summary file
-    const summaryPath = path.join(testDir, `PR-${carbonPRNumber}-summary.md`);
-    const summary = `# Test PR from Carbon #${carbonPRNumber}
+    // Create summary file
+    const summaryContent = `# Test PR from Carbon #${carbonPRNumber}
 
 ## Original PR
 - **Title**: ${carbonPR.title}
@@ -206,59 +147,65 @@ ${files.map(f => `- ${f.filename} (+${f.additions}/-${f.deletions})`).join('\n')
 1. Review the changes in this PR
 2. Run the review agent: \`npm start\`
 3. Check the comments and review summary
-4. All reviews will be posted to YOUR repository, not Carbon's
+4. All reviews will be posted to this repository
 
-## Diff
-The full diff is available in: \`carbon-pr-diff.patch\`
+---
+*This is a test PR created from Carbon Design System for local review testing.*
 `;
 
-    fs.writeFileSync(summaryPath, summary);
-    console.log(`   ✅ Created summary: ${summaryPath}`);
+    await octokit.rest.repos.createOrUpdateFileContents({
+      owner: TEST_OWNER,
+      repo: TEST_REPO,
+      path: `carbon-pr-test/PR-${carbonPRNumber}-summary.md`,
+      message: `Add summary for Carbon PR #${carbonPRNumber}`,
+      content: Buffer.from(summaryContent).toString('base64'),
+      branch: branchName
+    });
+    console.log(`   ✅ Created summary file`);
 
-    // Create sample files to demonstrate the changes
-    files.slice(0, 3).forEach((file, index) => {
-      const fileName = path.basename(file.filename);
-      const testFilePath = path.join(testDir, `${index + 1}-${fileName}`);
-      const content = `// Sample from Carbon PR #${carbonPRNumber}
+    // Create sample files from the Carbon PR
+    for (let i = 0; i < Math.min(3, files.length); i++) {
+      const file = files[i];
+      const fileName = file.filename.split('/').pop(); // Get just the filename
+      const sampleContent = `// Sample from Carbon PR #${carbonPRNumber}
 // Original file: ${file.filename}
 // Status: ${file.status}
 // Changes: +${file.additions}/-${file.deletions}
 
 ${file.patch || '// No patch available'}
 `;
-      fs.writeFileSync(testFilePath, content);
-      console.log(`   ✅ Created: ${testFilePath}`);
-    });
 
-    console.log('');
-
-    // Step 7: Commit changes
-    console.log('💾 Step 7: Committing changes...');
-    git('add .');
-    git(`commit -m "Test PR from Carbon #${carbonPRNumber}: ${carbonPR.title}"`);
-    console.log(`   ✅ Changes committed\n`);
-
-    // Step 8: Push to GitHub
-    console.log('📤 Step 8: Pushing to GitHub...');
-    console.log(`   Pushing to: ${remote.owner}/${remote.repo}`);
-    try {
-      git(`push -u origin ${branchName}`);
-      console.log(`   ✅ Pushed to origin/${branchName}\n`);
-    } catch (error) {
-      console.error(`   ❌ Error pushing: ${error.message}`);
-      console.error('   You may need to push manually:');
-      console.error(`   git push -u origin ${branchName}\n`);
+      await octokit.rest.repos.createOrUpdateFileContents({
+        owner: TEST_OWNER,
+        repo: TEST_REPO,
+        path: `carbon-pr-test/${i + 1}-${fileName}`,
+        message: `Add sample file ${i + 1} from Carbon PR #${carbonPRNumber}`,
+        content: Buffer.from(sampleContent).toString('base64'),
+        branch: branchName
+      });
+      console.log(`   ✅ Created sample file: ${fileName}`);
     }
 
-    // Step 9: Create PR
-    console.log('🎯 Step 9: Creating PR in your repository...');
+    // Save diff file
+    await octokit.rest.repos.createOrUpdateFileContents({
+      owner: TEST_OWNER,
+      repo: TEST_REPO,
+      path: `carbon-pr-test/carbon-pr-${carbonPRNumber}.patch`,
+      message: `Add diff from Carbon PR #${carbonPRNumber}`,
+      content: Buffer.from(diff).toString('base64'),
+      branch: branchName
+    });
+    console.log(`   ✅ Created diff file\n`);
+
+    // Step 8: Create PR
+    console.log('🎯 Step 8: Creating PR...');
     try {
       const { data: newPR } = await octokit.rest.pulls.create({
-        owner: remote.owner,
-        repo: remote.repo,
+        owner: TEST_OWNER,
+        repo: TEST_REPO,
         title: `[Test] ${carbonPR.title}`,
         head: branchName,
-        base: 'main',
+        base: baseBranch,
         body: `# Test PR from Carbon Design System
 
 This is a test PR created from Carbon PR #${carbonPRNumber} for local review testing.
@@ -266,18 +213,37 @@ This is a test PR created from Carbon PR #${carbonPRNumber} for local review tes
 **Original Carbon PR**: ${carbonPR.html_url}
 
 ## Purpose
-This PR allows you to run the review agent locally and see comments/reviews in YOUR repository without affecting the Carbon repository.
+This PR allows you to run the review agent locally and see comments/reviews in this test repository without affecting the Carbon repository.
 
 ## Original PR Details
-${summary}
+- **Title**: ${carbonPR.title}
+- **Author**: @${carbonPR.user.login}
+- **Files Changed**: ${files.length}
+- **Changes**: +${carbonPR.additions}/-${carbonPR.deletions}
 
 ## How to Review
-1. Run the review agent: \`npm start\`
-2. The agent will post comments and reviews to THIS PR
-3. All activity stays in your repository
+1. Update your \`.env\` file:
+   \`\`\`
+   GITHUB_AI_AGENT_OWNER=${TEST_OWNER}
+   GITHUB_AI_AGENT_REPO=${TEST_REPO}
+   \`\`\`
+
+2. Run the review agent:
+   \`\`\`bash
+   npm start
+   \`\`\`
+
+3. The agent will post comments and reviews to THIS PR
+
+## Files in This PR
+${files.slice(0, 5).map(f => `- \`${f.filename}\` (+${f.additions}/-${f.deletions})`).join('\n')}
+${files.length > 5 ? `\n... and ${files.length - 5} more files` : ''}
 
 ## Cleanup
 After testing, you can safely delete this PR and branch.
+
+---
+*Created from: ${carbonPR.html_url}*
 `
       });
 
@@ -288,8 +254,8 @@ After testing, you can safely delete this PR and branch.
       console.log(`🔗 URL: ${newPR.html_url}\n`);
       console.log('Next steps:');
       console.log('1. Update your .env file:');
-      console.log(`   GITHUB_AI_AGENT_OWNER=${remote.owner}`);
-      console.log(`   GITHUB_AI_AGENT_REPO=${remote.repo}`);
+      console.log(`   GITHUB_AI_AGENT_OWNER=${TEST_OWNER}`);
+      console.log(`   GITHUB_AI_AGENT_REPO=${TEST_REPO}`);
       console.log('');
       console.log('2. Run the review agent:');
       console.log('   npm start');
@@ -303,10 +269,9 @@ After testing, you can safely delete this PR and branch.
         console.error('   ❌ Error: Could not create PR');
         console.error('   This might be because:');
         console.error('   - A PR already exists for this branch');
-        console.error('   - The base branch (main) does not exist');
         console.error('   - There are no changes to create a PR\n');
-        console.error('   You can still manually create a PR at:');
-        console.error(`   https://github.com/${remote.owner}/${remote.repo}/compare/${branchName}\n`);
+        console.error('   You can view existing PRs at:');
+        console.error(`   https://github.com/${TEST_OWNER}/${TEST_REPO}/pulls\n`);
       } else {
         throw error;
       }
@@ -328,18 +293,15 @@ async function main() {
   const carbonPRNumber = process.argv[2];
 
   if (!carbonPRNumber) {
-    console.log('\n📚 Create Test PR from Carbon PR\n');
+    console.log('\n📚 Create Test PR in carbon-pr-review-test\n');
     console.log('Usage:');
     console.log('  node examples/create-test-pr.js <CARBON_PR_NUMBER>\n');
     console.log('Example:');
     console.log('  node examples/create-test-pr.js 22425\n');
     console.log('This will:');
     console.log('  1. Fetch the Carbon PR');
-    console.log('  2. Create a branch in YOUR repository');
-    console.log('  3. Create test files based on the Carbon PR');
-    console.log('  4. Push to YOUR GitHub');
-    console.log('  5. Create a PR in YOUR repository');
-    console.log('  6. You can then run the review agent on YOUR PR\n');
+    console.log(`  2. Create a PR in ${TEST_OWNER}/${TEST_REPO}`);
+    console.log('  3. You can then run the review agent on that PR\n');
     console.log('💡 First, browse available PRs:');
     console.log('   node examples/fetch-carbon-pr.js\n');
     process.exit(0);

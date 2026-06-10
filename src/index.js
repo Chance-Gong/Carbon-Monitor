@@ -69,22 +69,7 @@ async function reviewPRs() {
     return;
   }
   
-  console.log(`✅ Agent '${agent}' is available`);
-  
-  // Check if carbon-mcp MCP server is available
-  const { promisify } = require('util');
-  const which = promisify(require('which'));
-  
-  let carbonMcpAvailable = false;
-  try {
-    await which('carbon-mcp');
-    carbonMcpAvailable = true;
-    console.log('✅ carbon-mcp MCP server is available');
-  } catch (error) {
-    console.warn('⚠️  carbon-mcp not found - Carbon verification will be limited');
-    console.warn('   Install with: npm install -g carbon-mcp');
-  }
-  console.log('');
+  console.log(`✅ Agent '${agent}' is available\n`);
   
   // Create GitHub client
   const { Octokit } = await import('@octokit/rest');

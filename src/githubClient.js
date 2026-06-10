@@ -103,7 +103,7 @@ function createGitHubClient(octokit) {
         }
 
         // Post as a review with inline comments
-        // Use 'line' parameter for file line numbers (works for new and modified files)
+        // Use 'position' parameter for diff positions (required for modified files)
         const { data: review } = await octokit.rest.pulls.createReview({
           owner,
           repo,
@@ -113,8 +113,7 @@ function createGitHubClient(octokit) {
           comments: validComments.map(c => ({
             path: c.path,
             body: c.body,
-            line: c.position,        // File line number
-            side: 'RIGHT'            // Side of diff (RIGHT = new version)
+            position: c.position    // Diff position (1-based index in the diff)
           }))
         });
 

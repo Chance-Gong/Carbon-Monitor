@@ -5,6 +5,7 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
+    "api": "node src/api/server.js",
     "test": "node tests/test-agent.js",
     "test:parser": "node tests/test-parser.js",
     "test:diff": "node tests/test-diff-mapper.js",

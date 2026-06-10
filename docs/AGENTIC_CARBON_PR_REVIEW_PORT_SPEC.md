@@ -9,7 +9,7 @@ Port the existing `genAI/github_ai_agents` PR review job from a direct Watsonx g
 - Runtime: Node server, scheduled from `index.js`
 - Agent model: one selected CLI agent per PR, no failover
 - Supported CLIs: `bob`, `claude`, `codex`
-- Ground truth: Carbon Builder skill where available, otherwise Carbon MCP
+- Ground truth: **Carbon MCP tools MUST be used to verify ALL Carbon-specific claims before including them in review findings or summary**
 - Tracking: preserve the stable `AIReviewed` label workflow
 - Removed: Watsonx review generation and old internal repo metadata automation
 

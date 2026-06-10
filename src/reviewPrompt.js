@@ -137,8 +137,29 @@ Review the PR bundle in the current directory:
 Primary objective:
 Find correctness, accessibility, test, migration, and Carbon Design System issues introduced by this PR.
 
-Carbon ground-truth rule:
-Before making any Carbon-specific claim about components, imports, icons, tokens, props, styling, layout, accessibility, or design rationale, verify it with Carbon Builder. If Carbon Builder is unavailable, verify it with Carbon MCP. If neither is available, omit the Carbon-specific claim.
+**CRITICAL: Carbon Ground-Truth Enforcement**
+
+BEFORE including ANY Carbon-specific claim in findings or summary, you MUST:
+1. Call carbon-mcp MCP tools to verify the claim against Carbon source code and documentation
+2. Use tools like: list_carbon_components, get_carbon_component, get_carbon_tokens, list_carbon_icons, search_carbon_patterns
+3. Parse the MCP tool response to extract accurate information
+4. Include verification metadata in the finding: \`carbonVerified: true\` and \`verificationSource: "carbon-mcp"\`
+5. Reference the specific MCP tool used in the finding body (e.g., "Verified via carbon-mcp get_carbon_component")
+
+Carbon-specific topics requiring MCP verification:
+- Component names, props, or APIs (Button, Modal, DataTable, etc.)
+- Carbon tokens ($spacing-05, $layer-01, etc.)
+- Carbon icons (@carbon/icons-react)
+- IBM Products components (@carbon/ibm-products)
+- Carbon Charts usage
+- Accessibility patterns from Carbon
+- Design system compliance
+- SCSS imports and mixins
+
+If carbon-mcp is unavailable or a claim cannot be verified:
+- DO NOT include the Carbon-specific claim in findings or summary
+- Focus only on general code quality issues
+- Mark non-Carbon findings as: \`carbonVerified: false, verificationSource: "not-carbon-specific"\`
 
 Return exactly this JSON between markers:
 
