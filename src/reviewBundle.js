@@ -99,55 +99,7 @@ Mandatory:
 - Produce only the requested JSON object and review Markdown.
 `;
 
-    // Write for Codex
-    await fs.writeFile(
-      path.join(tempDir, 'AGENTS.md'),
-      rules
-    );
-
-    // Configure Carbon Builder MCP server for Codex
-    const codexMcpConfig = {
-      mcpServers: {
-        carbon: {
-          command: 'npx',
-          args: ['-y', '@carbon/mcp-server']
-        }
-      }
-    };
-    
-    // Codex looks for config in .codex directory
-    const codexConfigDir = path.join(tempDir, '.codex');
-    await fs.mkdir(codexConfigDir, { recursive: true });
-    await fs.writeFile(
-      path.join(codexConfigDir, 'mcp_config.json'),
-      JSON.stringify(codexMcpConfig, null, 2)
-    );
-
-    // Write for Claude
-    await fs.writeFile(
-      path.join(tempDir, 'CLAUDE.md'),
-      rules
-    );
-
-    // Configure Carbon Builder MCP server for Claude
-    const claudeMcpConfig = {
-      mcpServers: {
-        carbon: {
-          command: 'npx',
-          args: ['-y', '@carbon/mcp-server']
-        }
-      }
-    };
-    
-    // Claude looks for config in .claude directory
-    const claudeConfigDir = path.join(tempDir, '.claude');
-    await fs.mkdir(claudeConfigDir, { recursive: true });
-    await fs.writeFile(
-      path.join(claudeConfigDir, 'mcp_config.json'),
-      JSON.stringify(claudeMcpConfig, null, 2)
-    );
-
-    // Write for Bob
+    // Write agent rules for Bob
     const bobRulesDir = path.join(tempDir, '.bob', 'rules');
     await fs.mkdir(bobRulesDir, { recursive: true });
     await fs.writeFile(
@@ -155,43 +107,8 @@ Mandatory:
       rules
     );
 
-    // Configure Carbon Builder MCP server for Bob
-    const bobMcpConfig = {
-      mcpServers: {
-        carbon: {
-          command: 'npx',
-          args: ['-y', '@carbon/mcp-server'],
-          env: {}
-        }
-      }
-    };
-    
-    await fs.writeFile(
-      path.join(tempDir, '.bob', 'mcp.json'),
-      JSON.stringify(bobMcpConfig, null, 2)
-    );
-
-    // Also create a skills configuration for Carbon Builder
-    const bobSkillsDir = path.join(tempDir, '.bob', 'skills');
-    await fs.mkdir(bobSkillsDir, { recursive: true });
-    
-    const carbonBuilderSkill = {
-      name: 'carbon-builder',
-      description: 'Carbon Design System verification and documentation tool',
-      version: '1.0.0',
-      mcp_server: 'carbon',
-      tools: [
-        'search_carbon_docs',
-        'get_component_info',
-        'verify_carbon_pattern',
-        'check_accessibility'
-      ]
-    };
-    
-    await fs.writeFile(
-      path.join(bobSkillsDir, 'carbon-builder.json'),
-      JSON.stringify(carbonBuilderSkill, null, 2)
-    );
+    // Note: Bob uses globally configured MCP servers, not per-directory .bob/mcp.json
+    // The carbon-mcp server must be configured globally with: bob mcp add carbon-mcp npx -y carbon-mcp
 
     // 6. Create review prompt
     const prompt = `You are an agentic PR reviewer for ${owner}/${repo}.
@@ -205,8 +122,49 @@ Review the PR bundle in the current directory:
 Primary objective:
 Find correctness, accessibility, test, migration, and Carbon Design System issues introduced by this PR.
 
-Carbon ground-truth rule:
-Before making any Carbon-specific claim about components, imports, icons, tokens, props, styling, layout, accessibility, or design rationale, verify it with Carbon Builder. If Carbon Builder is unavailable, verify it with Carbon MCP. If neither is available, omit the Carbon-specific claim.
+CRITICAL Carbon Verification Protocol:
+
+1. BEFORE making ANY Carbon-specific claim, you MUST:
+   a. Use the carbon-mcp MCP server tools to verify the claim
+   b. Call code_search or docs_search MCP tools
+   c. Include verification metadata in the finding
+
+2. Carbon-specific topics requiring verification:
+   - Component names, props, or APIs (Button, Modal, DataTable, etc.)
+   - Carbon tokens ($spacing-05, $layer-01, etc.)
+   - Carbon icons (@carbon/icons-react)
+   - IBM Products components (@carbon/ibm-products)
+   - Carbon Charts usage
+   - Accessibility patterns from Carbon
+   - Design system compliance
+
+3. How to verify using carbon-mcp MCP tools:
+   - Use code_search tool with query like "Button kind prop" and filters.component_type="React"
+   - Use docs_search tool for design guidance and accessibility patterns
+   - Use get_charts tool for Carbon Charts information
+   - Parse the JSON response to extract valid values/patterns
+
+4. Verification metadata format (REQUIRED for Carbon findings):
+   {
+     "severity": "major",
+     "file": "src/Button.jsx",
+     "line": 45,
+     "title": "Invalid Button kind prop",
+     "body": "Verified via carbon-mcp code_search: The 'kind' prop only accepts: primary, secondary, tertiary, ghost, danger, danger--tertiary, danger--ghost. Found: 'custom'",
+     "carbonVerified": true,
+     "verificationSource": "carbon-mcp"
+   }
+
+5. If carbon-mcp MCP server is unavailable:
+   - DO NOT make Carbon-specific claims
+   - Focus on general code quality issues only
+   - Mark non-Carbon findings as: "carbonVerified": false, "verificationSource": "not-carbon-specific"
+
+6. Example verification workflow:
+   - Spot potential issue: <Button kind="custom">
+   - Call carbon-mcp code_search tool with query="Button kind prop" and filters.component_type="React"
+   - Parse JSON response to get valid prop values
+   - Create finding with carbonVerified: true and verificationSource: "carbon-mcp"
 
 Return exactly this JSON between markers:
 
@@ -219,7 +177,7 @@ BEGIN_REVIEW_JSON
       "file": "repo-relative path",
       "line": 123,
       "title": "short title",
-      "body": "specific actionable comment",
+      "body": "specific actionable comment with verification details if Carbon-related",
       "carbonVerified": true,
       "verificationSource": "carbon-builder|carbon-mcp|not-carbon-specific"
     }

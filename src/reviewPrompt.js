@@ -3,8 +3,36 @@
  */
 
 /**
+ * Estimate token usage for a PR review
+ *
+ * @param {Object} options - Token estimation options
+ * @param {string} options.prompt - Review prompt text
+ * @param {string} options.diff - PR diff content
+ * @param {string} options.agentOutput - Agent's output
+ * @returns {Object} - Token usage estimate { input: number, output: number, total: number }
+ */
+function estimateTokenUsage({ prompt, diff, agentOutput }) {
+  // Rough estimation: 1 token ≈ 4 characters for English text
+  // This is a conservative estimate; actual tokenization varies by model
+  const CHARS_PER_TOKEN = 4;
+  
+  const inputChars = (prompt?.length || 0) + (diff?.length || 0);
+  const outputChars = agentOutput?.length || 0;
+  
+  const inputTokens = Math.ceil(inputChars / CHARS_PER_TOKEN);
+  const outputTokens = Math.ceil(outputChars / CHARS_PER_TOKEN);
+  const totalTokens = inputTokens + outputTokens;
+  
+  return {
+    input: inputTokens,
+    output: outputTokens,
+    total: totalTokens
+  };
+}
+
+/**
  * Format summary comment with spec-compliant template
- * 
+ *
  * @param {Object} options - Formatting options
  * @param {string} options.agent - Agent name (bob, claude, codex)
  * @param {string} options.summaryMarkdown - Agent's summary markdown
@@ -12,9 +40,10 @@
  * @param {string} options.commitSha - Head commit SHA
  * @param {Array} [options.inlineFindings] - Findings posted as inline comments
  * @param {Array} [options.summaryFindings] - Findings included in summary
+ * @param {Object} [options.tokenUsage] - Token usage estimate { input, output, total }
  * @returns {string} - Formatted summary comment
  */
-function formatSummaryComment({ agent, summaryMarkdown, prNumber, commitSha, inlineFindings = [], summaryFindings = [] }) {
+function formatSummaryComment({ agent, summaryMarkdown, prNumber, commitSha, inlineFindings = [], summaryFindings = [], tokenUsage = null }) {
   let comment = `[AI agent review — Carbon grounded]\n\n`;
   comment += `Reviewed by: ${agent}\n`;
   comment += `Carbon verification policy: Carbon-specific claims require Carbon Builder or Carbon MCP verification.\n\n`;
@@ -55,6 +84,16 @@ function formatSummaryComment({ agent, summaryMarkdown, prNumber, commitSha, inl
   }
   if (summaryFindings && summaryFindings.length > 0) {
     comment += `- Summary findings: ${summaryFindings.length}\n`;
+  }
+  
+  // Add token usage estimate if available
+  if (tokenUsage) {
+    comment += `\n---\n\n`;
+    comment += `**Estimated Token Usage:**\n`;
+    comment += `- Input tokens: ~${tokenUsage.input.toLocaleString()}\n`;
+    comment += `- Output tokens: ~${tokenUsage.output.toLocaleString()}\n`;
+    comment += `- Total tokens: ~${tokenUsage.total.toLocaleString()}\n`;
+    comment += `\n*Note: Token estimates are approximate and based on character count (1 token ≈ 4 characters).*\n`;
   }
   
   return comment;
@@ -125,7 +164,8 @@ END_REVIEW_JSON`;
 module.exports = {
   formatSummaryComment,
   formatInlineComment,
-  buildReviewPrompt
+  buildReviewPrompt,
+  estimateTokenUsage
 };
 
 // Made with Bob

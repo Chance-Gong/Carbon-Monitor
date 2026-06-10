@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "carbon-mcp": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "carbon-mcp"
+      ]
+    }
+  }
+}

@@ -96,13 +96,14 @@ function createGitHubClient(octokit) {
         }
 
         // Filter out comments that don't have required fields
-        const validComments = comments.filter(c => c.path && c.line && c.body);
+        const validComments = comments.filter(c => c.path && c.position && c.body);
 
         if (validComments.length === 0) {
           return null;
         }
 
         // Post as a review with inline comments
+        // Use 'line' parameter for file line numbers (works for new and modified files)
         const { data: review } = await octokit.rest.pulls.createReview({
           owner,
           repo,
@@ -112,8 +113,8 @@ function createGitHubClient(octokit) {
           comments: validComments.map(c => ({
             path: c.path,
             body: c.body,
-            line: c.line,      // Line number in the file
-            side: 'RIGHT'      // Comment on the new version
+            line: c.position,        // File line number
+            side: 'RIGHT'            // Side of diff (RIGHT = new version)
           }))
         });
 

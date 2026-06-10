@@ -8,6 +8,7 @@ AI-powered PR review agent for the Carbon Design System repository. This tool au
 - ✅ **CLI Agent Support** - Works with Bob, Claude, or Codex
 - ✅ **Carbon Verification** - Validates Carbon-specific claims using Carbon Builder/MCP
 - ✅ **Structured Output** - JSON-formatted findings with severity levels
+- ✅ **Token Usage Tracking** - Estimates and reports token consumption per PR review
 - ✅ **Minimal Metadata** - Only adds `AIReviewed` label (no complex automation)
 - ✅ **Single Repository** - Focused on `carbon-design-system/carbon`
 
@@ -40,8 +41,10 @@ carbon-pr-review/
    - **Bob Shell** - Best for IBM office/VPN (requires `BOBSHELL_API_KEY`)
    - **Claude** - Works anywhere (requires `ANTHROPIC_API_KEY`)
    - **Codex** - Alternative option
-
-**Note:** Carbon Builder MCP server integration is configured but the `@carbon/mcp-server` package does not currently exist. See [`docs/CARBON_VERIFICATION_STATUS.md`](docs/CARBON_VERIFICATION_STATUS.md) for details.
+4. **carbon-mcp** - MCP server for Carbon verification
+   ```bash
+   npm install -g carbon-mcp
+   ```
 
 ## Installation
 
@@ -53,25 +56,25 @@ cd carbon-pr-review
 npm install
 ```
 
-3. Configure environment:
+3. Install your chosen CLI agent:
+```bash
+# For Bob (recommended)
+npm install -g @ibm/bob-shell
+```
+
+4. **Configure carbon-mcp for Bob** (required for Carbon verification):
+```bash
+bob mcp add carbon-mcp npx -y carbon-mcp
+bob mcp list  # Verify it shows: ✓ carbon-mcp: npx -y carbon-mcp (stdio) - Connected
+```
+
+5. Configure environment:
 ```bash
 cp .env.example .env
 # Edit .env with your credentials
 ```
 
-4. Install your chosen CLI agent:
-```bash
-# For Bob
-npm install -g @ibm/bob-shell
-or
-npm install -g bob-cli
-
-# For Claude
-npm install -g @anthropic-ai/claude-cli
-
-# For Codex
-npm install -g openai-codex-cli
-```
+**For detailed Carbon verification setup, see [`CARBON_SETUP.md`](CARBON_SETUP.md)**
 
 ## Configuration
 
@@ -121,6 +124,19 @@ This will:
 ```bash
 npm test
 ```
+
+### Test with Forked Carbon Repository
+
+For safe, realistic testing with actual Carbon PRs, see the comprehensive guide:
+
+**[📖 Testing with Forked Carbon Repository](docs/TESTING_WITH_FORKED_CARBON.md)**
+
+This guide covers:
+- Forking and configuring the Carbon repo
+- Creating realistic test PRs
+- Running end-to-end tests
+- Testing different scenarios
+- Troubleshooting common issues
 
 ### Run Manually
 
@@ -245,6 +261,16 @@ See [`docs/CARBON_VERIFICATION_STATUS.md`](docs/CARBON_VERIFICATION_STATUS.md) f
 See [`docs/CARBON_PORT_COMPARISON.md`](docs/CARBON_PORT_COMPARISON.md) for detailed comparison.
 
 ## Recent Fixes
+
+### Token Usage Tracking (2026-06-08)
+
+Added automatic token usage estimation for each PR review:
+- Calculates approximate input/output token counts
+- Displays estimates in PR review comments
+- Helps with cost tracking and capacity planning
+- Uses 1 token ≈ 4 characters heuristic
+
+See [`docs/TOKEN_USAGE_TRACKING.md`](docs/TOKEN_USAGE_TRACKING.md) for details.
 
 ### JSON Truncation Handling (2026-06-05)
 

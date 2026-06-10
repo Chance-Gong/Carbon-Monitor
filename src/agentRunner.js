@@ -50,6 +50,8 @@ async function runAgent({ agent, cwd, prompt, timeout = 5 * 60 * 1000 }) {
     switch (agent) {
       case 'bob':
         // Bob Shell CLI - print mode with auto-confirm
+        // Note: Bob doesn't support per-directory MCP config via .bob/mcp.json
+        // MCP servers must be configured globally with 'bob mcp add'
         command = 'bob';
         args = ['-p', prompt, '--yolo'];
         break;

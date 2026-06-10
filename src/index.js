@@ -16,7 +16,7 @@ const { createGitHubClient } = require('./githubClient');
 const { buildReviewBundle } = require('./reviewBundle');
 const { runAgent, getConfiguredAgent, isAgentAvailable } = require('./agentRunner');
 const { parseReviewOutput } = require('./reviewParser');
-const { formatSummaryComment, formatInlineComment } = require('./reviewPrompt');
+const { formatSummaryComment, formatInlineComment, estimateTokenUsage } = require('./reviewPrompt');
 const { splitFindings } = require('./diffMapper');
 const {
   GITHUB_OWNER,
@@ -40,7 +40,7 @@ async function reviewPRs() {
     return;
   }
 
-  // Spec-compliant startup logging (lines 438-443)
+  // Spec-compliant startup logging
   console.log(`[AI PR Review] repo=${GITHUB_OWNER}/${GITHUB_REPO}`);
   console.log(`[AI PR Review] selectedAgent=${REVIEW_AGENT}`);
   console.log(`[AI PR Review] label=${REVIEW_LABEL}`);
@@ -53,16 +53,11 @@ async function reviewPRs() {
   
   // Get configured agent
   const agent = REVIEW_AGENT;
-  console.log(`Agent: ${agent}`);
   
   // Validate agent
-  try {
-    const validAgents = ['bob', 'claude', 'codex'];
-    if (!validAgents.includes(agent)) {
-      throw new Error(`Invalid agent: ${agent}. Must be one of: ${validAgents.join(', ')}`);
-    }
-  } catch (error) {
-    console.error('❌ Error getting configured agent:', error.message);
+  const validAgents = ['bob', 'claude', 'codex'];
+  if (!validAgents.includes(agent)) {
+    console.error(`❌ Invalid agent: ${agent}. Must be one of: ${validAgents.join(', ')}`);
     return;
   }
   
@@ -70,33 +65,24 @@ async function reviewPRs() {
   const available = await isAgentAvailable(agent);
   if (!available) {
     console.error(`❌ Agent '${agent}' is not available in PATH`);
-    console.error(`Please install ${agent} CLI tool`);
+    console.error(`   Please install ${agent} CLI tool`);
     return;
   }
   
   console.log(`✅ Agent '${agent}' is available`);
   
-  // Check if Carbon Builder MCP server is available
-  console.log('🔍 Checking Carbon Builder MCP server...');
-  const { spawn } = require('child_process');
-  const carbonBuilderAvailable = await new Promise((resolve) => {
-    const proc = spawn('npx', ['-y', '@carbon/mcp-server', '--version'], {
-      stdio: 'ignore'
-    });
-    proc.on('close', (code) => resolve(code === 0));
-    proc.on('error', () => resolve(false));
-    setTimeout(() => {
-      proc.kill();
-      resolve(false);
-    }, 10000);
-  });
+  // Check if carbon-mcp MCP server is available
+  const { promisify } = require('util');
+  const which = promisify(require('which'));
   
-  if (carbonBuilderAvailable) {
-    console.log('✅ Carbon Builder MCP server is available');
-  } else {
-    console.warn('⚠️  Carbon Builder MCP server not found');
-    console.warn('   The agent will have limited Carbon verification capabilities');
-    console.warn('   Install with: npm install -g @carbon/mcp-server');
+  let carbonMcpAvailable = false;
+  try {
+    await which('carbon-mcp');
+    carbonMcpAvailable = true;
+    console.log('✅ carbon-mcp MCP server is available');
+  } catch (error) {
+    console.warn('⚠️  carbon-mcp not found - Carbon verification will be limited');
+    console.warn('   Install with: npm install -g carbon-mcp');
   }
   console.log('');
   
@@ -207,7 +193,7 @@ async function reviewPRs() {
           
           const inlineComments = inlineFindings.map(finding => ({
             path: finding.diffPosition.path,
-            line: finding.diffPosition.line,
+            position: finding.diffPosition.position,
             body: formatInlineComment(finding)
           }));
           
@@ -229,6 +215,15 @@ async function reviewPRs() {
           }
         }
         
+        // Calculate token usage estimate
+        console.log('\n📊 Calculating token usage...');
+        const tokenUsage = estimateTokenUsage({
+          prompt: bundle.prompt,
+          diff: diff,
+          agentOutput: agentOutput
+        });
+        console.log(`✅ Estimated tokens: ~${tokenUsage.total.toLocaleString()} (input: ~${tokenUsage.input.toLocaleString()}, output: ~${tokenUsage.output.toLocaleString()})`);
+        
         // Format and post summary comment (check env flag)
         const postSummary = process.env.GITHUB_AI_AGENT_POST_SUMMARY_COMMENT !== 'false';
         if (postSummary) {
@@ -239,7 +234,8 @@ async function reviewPRs() {
             prNumber: pr.number,
             commitSha: pr.head.sha,
             inlineFindings,
-            summaryFindings
+            summaryFindings,
+            tokenUsage
           });
           
           await client.postSummaryComment({
