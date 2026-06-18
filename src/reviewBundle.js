@@ -7,6 +7,84 @@ const fs = require('fs').promises;
 const path = require('path');
 const os = require('os');
 const { MAX_DIFF_CHARS } = require('./constants');
+const { buildReviewPrompt } = require('./reviewPrompt');
+
+/**
+ * Strip single-line and multi-line comments from JSON string
+ * @param {string} jsonString - JSON string potentially with comments
+ * @returns {string} JSON string without comments
+ */
+function stripJsonComments(jsonString) {
+  // Remove single-line comments (// ...)
+  let result = jsonString.replace(/\/\/.*$/gm, '');
+  // Remove multi-line comments (/* ... */)
+  result = result.replace(/\/\*[\s\S]*?\*\//g, '');
+  return result;
+}
+
+/**
+ * Get the current working directory's Bob settings path
+ * @returns {string|null} Path to settings.json or null if not found
+ */
+function getCurrentBobSettingsPath() {
+  const possiblePaths = [
+    path.join(process.cwd(), '.bob', 'settings.json'),
+    path.join(os.homedir(), '.bob', 'settings.json')
+  ];
+  
+  for (const configPath of possiblePaths) {
+    try {
+      if (require('fs').existsSync(configPath)) {
+        return configPath;
+      }
+    } catch (error) {
+      // Continue to next path
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Create a default Bob settings with MCP config for carbon-mcp-server
+ * @param {string} tempDir - Temporary directory path
+ */
+async function createDefaultBobSettings(tempDir) {
+  const bobSettings = {
+    mcpServers: {
+      'carbon-mcp-server': {
+        command: 'npx',
+        args: ['-y', 'carbon-mcp']
+      }
+    }
+  };
+  
+  await fs.writeFile(
+    path.join(tempDir, '.bob', 'settings.json'),
+    JSON.stringify(bobSettings, null, 2)
+  );
+}
+
+/**
+ * Recursively copy a directory
+ * @param {string} src - Source directory
+ * @param {string} dest - Destination directory
+ */
+async function copyDirectory(src, dest) {
+  await fs.mkdir(dest, { recursive: true });
+  const entries = await fs.readdir(src, { withFileTypes: true });
+  
+  for (const entry of entries) {
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+    
+    if (entry.isDirectory()) {
+      await copyDirectory(srcPath, destPath);
+    } else {
+      await fs.copyFile(srcPath, destPath);
+    }
+  }
+}
 
 /**
  * Build a review bundle for agent execution
@@ -20,19 +98,58 @@ async function buildReviewBundle({ owner, repo, pr, diff, files }) {
   );
 
   try {
-    // 1. Write PR metadata
+    // 1. Write .env file with API key for Bob
+    // Bob looks for BOBSHELL_API_KEY in .env file in current directory
+    const envContent = `BOBSHELL_API_KEY=${process.env.BOBSHELL_API_KEY || ''}\n`;
+    await fs.writeFile(
+      path.join(tempDir, '.env'),
+      envContent
+    );
+
+    // 2. Write Bob MCP config - Bob reads .bob/mcp.json from current working directory
+    const bobDir = path.join(tempDir, '.bob');
+    await fs.mkdir(bobDir, { recursive: true });
+    
+    const bobMcpConfig = {
+      mcpServers: {
+        'carbon-mcp-server': {
+          command: 'npx',
+          args: ['-y', 'carbon-mcp'],
+          trust: true,
+          alwaysAllow: [
+            'search_docs',
+            'search_file_content',
+            'list_carbon_components',
+            'get_carbon_component',
+            'list_carbon_charts',
+            'get_carbon_chart',
+            'list_carbon_icons',
+            'get_carbon_icon',
+            'list_carbon_pictograms',
+            'get_carbon_pictogram'
+          ]
+        }
+      }
+    };
+    
+    await fs.writeFile(
+      path.join(bobDir, 'mcp.json'),
+      JSON.stringify(bobMcpConfig, null, 2)
+    );
+
+    // 3. Write PR metadata
     await fs.writeFile(
       path.join(tempDir, 'pr.json'),
       JSON.stringify(pr, null, 2)
     );
 
-    // 2. Write files list
+    // 4. Write files list
     await fs.writeFile(
       path.join(tempDir, 'files.json'),
       JSON.stringify(files, null, 2)
     );
 
-    // 3. Write diff (with truncation if needed per spec lines 62-67)
+    // 5. Write diff (with truncation if needed per spec lines 62-67)
     let diffToWrite = diff;
     let diffTruncated = false;
     
@@ -49,7 +166,7 @@ async function buildReviewBundle({ owner, repo, pr, diff, files }) {
       diffToWrite
     );
 
-    // 4. Write PR review request summary
+    // 6. Write PR review request summary
     const prSummary = `# PR Review Request
 
 **Repository:** ${owner}/${repo}
@@ -84,12 +201,16 @@ See diff.patch for the full changes.
       prSummary
     );
 
-    // 5. Write agent rules (for all agent types)
+    // 6. Write agent rules (for all agent types)
     const rules = `# Carbon PR Review Agent Rules
 
 You are reviewing a pull request in ${owner}/${repo}.
 
 Mandatory:
+- Use Carbon MCP tools (search_docs, search_file_content, list_carbon_components, get_carbon_component, list_carbon_charts, get_carbon_chart, list_carbon_icons, get_carbon_icon) for ALL Carbon Design System verification
+- Verify components, props, tokens, icons, patterns, and accessibility claims using MCP tools
+- Set verificationSource to "carbon-mcp" for all Carbon-verified findings
+- Set verificationSource to "not-carbon-specific" for generic code review findings
 - Prefer specific actionable findings over general advice
 - Do not edit files
 - Do not run package manager install commands
@@ -104,39 +225,14 @@ Mandatory:
       rules
     );
 
-    // 6. Create review prompt
-    const prompt = `You are an agentic PR reviewer for ${owner}/${repo}.
+    // Note: Bob will use the local .bob/mcp.json created above for MCP configuration
+    // This ensures carbon-mcp-server is available even when running from temp directories
+    console.log('Created local .bob/mcp.json with carbon-mcp-server configuration');
 
-Review the PR bundle in the current directory:
-- PR_REVIEW_REQUEST.md
-- pr.json
-- files.json
-- diff.patch
+    // 6. Create review prompt using the detailed prompt builder
+    const prompt = buildReviewPrompt({ owner, repo });
 
-Primary objective:
-Find correctness, accessibility, test, migration, and Carbon Design System issues introduced by this PR.
-
-Return exactly this JSON between markers:
-
-BEGIN_REVIEW_JSON
-{
-  "summaryMarkdown": "string",
-  "findings": [
-    {
-      "severity": "blocking|major|minor|nit",
-      "file": "repo-relative path",
-      "line": 123,
-      "title": "short title",
-      "body": "specific actionable comment with verification details if Carbon-related",
-      "carbonVerified": true,
-      "verificationSource": "carbon-builder|carbon-mcp|not-carbon-specific"
-    }
-  ],
-  "shouldPostInlineComments": true
-}
-END_REVIEW_JSON`;
-
-    // Return bundle object
+    // Return bundle object (no settingsPath needed - using global config)
     return {
       dir: tempDir,
       prompt,

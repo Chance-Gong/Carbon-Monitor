@@ -124,12 +124,11 @@ async function createTestPR(carbonPRNumber) {
     console.log('📝 Step 7: Creating test files...');
 
     // Create summary file
-    const summaryContent = `# Test PR from Carbon #${carbonPRNumber}
+    const summaryContent = `# Test PR from Carbon PR ${carbonPRNumber}
 
-## Original PR
+## Original PR Info
 - **Title**: ${carbonPR.title}
-- **Author**: @${carbonPR.user.login}
-- **URL**: ${carbonPR.html_url}
+- **PR Number**: ${carbonPRNumber}
 - **Status**: ${carbonPR.state}
 
 ## Changes
@@ -150,14 +149,14 @@ ${files.map(f => `- ${f.filename} (+${f.additions}/-${f.deletions})`).join('\n')
 4. All reviews will be posted to this repository
 
 ---
-*This is a test PR created from Carbon Design System for local review testing.*
+*This is a test PR created from Carbon Design System PR ${carbonPRNumber} for local review testing.*
 `;
 
     await octokit.rest.repos.createOrUpdateFileContents({
       owner: TEST_OWNER,
       repo: TEST_REPO,
       path: `carbon-pr-test/PR-${carbonPRNumber}-summary.md`,
-      message: `Add summary for Carbon PR #${carbonPRNumber}`,
+      message: `Add summary for Carbon PR ${carbonPRNumber}`,
       content: Buffer.from(summaryContent).toString('base64'),
       branch: branchName
     });
@@ -167,7 +166,7 @@ ${files.map(f => `- ${f.filename} (+${f.additions}/-${f.deletions})`).join('\n')
     for (let i = 0; i < Math.min(3, files.length); i++) {
       const file = files[i];
       const fileName = file.filename.split('/').pop(); // Get just the filename
-      const sampleContent = `// Sample from Carbon PR #${carbonPRNumber}
+      const sampleContent = `// Sample from Carbon PR ${carbonPRNumber}
 // Original file: ${file.filename}
 // Status: ${file.status}
 // Changes: +${file.additions}/-${file.deletions}
@@ -179,7 +178,7 @@ ${file.patch || '// No patch available'}
         owner: TEST_OWNER,
         repo: TEST_REPO,
         path: `carbon-pr-test/${i + 1}-${fileName}`,
-        message: `Add sample file ${i + 1} from Carbon PR #${carbonPRNumber}`,
+        message: `Add sample file ${i + 1} from Carbon PR ${carbonPRNumber}`,
         content: Buffer.from(sampleContent).toString('base64'),
         branch: branchName
       });
@@ -191,7 +190,7 @@ ${file.patch || '// No patch available'}
       owner: TEST_OWNER,
       repo: TEST_REPO,
       path: `carbon-pr-test/carbon-pr-${carbonPRNumber}.patch`,
-      message: `Add diff from Carbon PR #${carbonPRNumber}`,
+      message: `Add diff from Carbon PR ${carbonPRNumber}`,
       content: Buffer.from(diff).toString('base64'),
       branch: branchName
     });
@@ -208,16 +207,14 @@ ${file.patch || '// No patch available'}
         base: baseBranch,
         body: `# Test PR from Carbon Design System
 
-This is a test PR created from Carbon PR #${carbonPRNumber} for local review testing.
-
-**Original Carbon PR**: ${carbonPR.html_url}
+This is a test PR created from Carbon PR ${carbonPRNumber} for local review testing.
 
 ## Purpose
 This PR allows you to run the review agent locally and see comments/reviews in this test repository without affecting the Carbon repository.
 
 ## Original PR Details
 - **Title**: ${carbonPR.title}
-- **Author**: @${carbonPR.user.login}
+- **PR Number**: ${carbonPRNumber}
 - **Files Changed**: ${files.length}
 - **Changes**: +${carbonPR.additions}/-${carbonPR.deletions}
 
@@ -243,7 +240,7 @@ ${files.length > 5 ? `\n... and ${files.length - 5} more files` : ''}
 After testing, you can safely delete this PR and branch.
 
 ---
-*Created from: ${carbonPR.html_url}*
+*Test PR based on Carbon Design System PR ${carbonPRNumber}*
 `
       });
 

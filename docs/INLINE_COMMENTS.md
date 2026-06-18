@@ -90,6 +90,18 @@ Detailed explanation of the issue and how to fix it.
 *✓ Verified with carbon-builder*
 ```
 
+Or if using carbon-mcp fallback:
+
+```markdown
+**Finding Title**
+
+Severity: major
+
+Detailed explanation of the issue and how to fix it.
+
+*✓ Verified with carbon-mcp*
+```
+
 ### API Integration
 
 Uses GitHub's review API via [`githubClient.js`](../src/githubClient.js:88-126):
@@ -155,6 +167,8 @@ Set to `false` to disable inline comments and post all findings in summary.
 ## Example Output
 
 ### Inline Comment (on code line)
+
+Example with carbon-builder:
 ```
 🤖 Bob Review Comment
 
@@ -167,12 +181,25 @@ Icon button needs aria-label for accessibility. Add aria-label prop with descrip
 ✓ Verified with carbon-builder
 ```
 
+Example with carbon-mcp (fallback):
+```
+🤖 Bob Review Comment
+
+**Missing aria-label**
+
+Severity: major
+
+Icon button needs aria-label for accessibility. Add aria-label prop with descriptive text.
+
+✓ Verified with carbon-mcp
+```
+
 ### Summary Comment
 ```markdown
 [AI agent review — Carbon grounded]
 
 Reviewed by: bob
-Carbon verification policy: Carbon-specific claims require Carbon Builder or Carbon MCP verification.
+Carbon verification policy: Carbon-specific claims verified via Carbon Builder skill (preferred) or Carbon MCP (fallback).
 
 ## Review Summary
 

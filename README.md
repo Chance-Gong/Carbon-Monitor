@@ -1,4 +1,4 @@
-# Carbon PR Review Agent
+# Carbon Monitor
 
 AI-powered PR review agent for the Carbon Design System repository. This tool automatically reviews pull requests using CLI agents (Bob, Claude, or Codex) and provides structured feedback with Carbon-specific verification.
 

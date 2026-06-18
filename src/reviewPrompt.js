@@ -46,7 +46,7 @@ function estimateTokenUsage({ prompt, diff, agentOutput }) {
 function formatSummaryComment({ agent, summaryMarkdown, prNumber, commitSha, inlineFindings = [], summaryFindings = [], tokenUsage = null }) {
   let comment = `[AI agent review — Carbon grounded]\n\n`;
   comment += `Reviewed by: ${agent}\n`;
-  comment += `Carbon verification policy: Carbon-specific claims require Carbon Builder or Carbon MCP verification.\n\n`;
+  comment += `Carbon verification policy: Carbon-specific claims verified via Carbon MCP tools.\n\n`;
   
   // Add agent's summary
   comment += summaryMarkdown + '\n\n';
@@ -65,8 +65,9 @@ function formatSummaryComment({ agent, summaryMarkdown, prNumber, commitSha, inl
       comment += `\n**Severity:** ${finding.severity}\n\n`;
       comment += finding.body + '\n\n';
       
-      if (finding.carbonVerified) {
-        comment += `*✓ Verified with ${finding.verificationSource}*\n\n`;
+      // Only show verification badge for Carbon-specific findings
+      if (finding.carbonVerified && finding.verificationSource === 'carbon-mcp') {
+        comment += `*✓ Verified with Carbon MCP*\n\n`;
       }
       
       comment += '---\n\n';
@@ -110,8 +111,9 @@ function formatInlineComment(finding) {
   comment += `Severity: ${finding.severity}\n\n`;
   comment += finding.body + '\n\n';
   
-  if (finding.carbonVerified) {
-    comment += `*✓ Verified with ${finding.verificationSource}*\n`;
+  // Only show verification badge for Carbon-specific findings
+  if (finding.carbonVerified && finding.verificationSource === 'carbon-mcp') {
+    comment += `*✓ Verified with Carbon MCP*\n`;
   }
   
   return comment;
@@ -128,6 +130,8 @@ function formatInlineComment(finding) {
 function buildReviewPrompt({ owner, repo }) {
   return `You are an agentic PR reviewer for ${owner}/${repo}.
 
+**You are reviewing a Carbon Design System PR. Use Carbon MCP tools to verify all Carbon component usage.**
+
 Review the PR bundle in the current directory:
 - PR_REVIEW_REQUEST.md
 - pr.json
@@ -139,27 +143,76 @@ Find correctness, accessibility, test, migration, and Carbon Design System issue
 
 **CRITICAL: Carbon Ground-Truth Enforcement**
 
-BEFORE including ANY Carbon-specific claim in findings or summary, you MUST:
-1. Call carbon-mcp MCP tools to verify the claim against Carbon source code and documentation
-2. Use tools like: list_carbon_components, get_carbon_component, get_carbon_tokens, list_carbon_icons, search_carbon_patterns
-3. Parse the MCP tool response to extract accurate information
-4. Include verification metadata in the finding: \`carbonVerified: true\` and \`verificationSource: "carbon-mcp"\`
-5. Reference the specific MCP tool used in the finding body (e.g., "Verified via carbon-mcp get_carbon_component")
+**Carbon MCP tools are the ONLY source of ground truth for all Carbon component code.**
 
-Carbon-specific topics requiring MCP verification:
-- Component names, props, or APIs (Button, Modal, DataTable, etc.)
-- Carbon tokens ($spacing-05, $layer-01, etc.)
-- Carbon icons (@carbon/icons-react)
-- IBM Products components (@carbon/ibm-products)
-- Carbon Charts usage
-- Accessibility patterns from Carbon
-- Design system compliance
-- SCSS imports and mixins
+**IMPORTANT: MCP Server Availability Check**
+Before marking ANY finding as "model-memory-fallback", you MUST verify:
+1. Did you successfully call list_carbon_components? → If YES, MCP IS AVAILABLE
+2. Did you successfully call get_carbon_component? → If YES, MCP IS AVAILABLE
+3. If ANY Carbon MCP tool returned data (even if other tools failed), MCP IS AVAILABLE
 
-If carbon-mcp is unavailable or a claim cannot be verified:
-- DO NOT include the Carbon-specific claim in findings or summary
-- Focus only on general code quality issues
-- Mark non-Carbon findings as: \`carbonVerified: false, verificationSource: "not-carbon-specific"\`
+**Carbon MCP Verification Protocol:**
+For all Carbon component verification, use Carbon MCP tools:
+1. **list_carbon_components** - Search for components by name or category
+2. **get_carbon_component** - Get detailed props, variants, and usage for a specific component
+3. **list_carbon_icons** / **get_carbon_icon** - Verify icon usage
+4. **list_carbon_charts** / **get_carbon_chart** - Verify chart components
+
+**CRITICAL: If you successfully used ANY of these tools, set verificationSource: "carbon-mcp" for ALL Carbon findings.**
+
+You MUST categorize each finding correctly - there are ONLY TWO categories:
+
+**Category 1: Carbon-Specific Findings (USE CARBON MCP)**
+   - ANY finding about Carbon Design System components, props, tokens, icons, or patterns
+   - **Examples that MUST be Category 1:**
+     * "DataTable missing required 'headers' prop" → Category 1 (mentions DataTable component)
+     * "TextInput missing required 'labelText' prop" → Category 1 (mentions TextInput component)
+     * "Using native HTML table instead of Carbon DataTable" → Category 1 (mentions DataTable)
+     * "Button missing iconDescription prop" → Category 1 (mentions Button component)
+     * "Using native checkbox instead of Carbon Checkbox" → Category 1 (mentions Checkbox)
+     * "Invalid use of Carbon tokens" → Category 1 (mentions Carbon tokens)
+     * "Missing @carbon/react import" → Category 1 (mentions @carbon package)
+   
+   - **REQUIRED: Use Carbon MCP tools to verify**
+     * Available tools: list_carbon_components, get_carbon_component, list_carbon_icons, get_carbon_icon
+     * Example: use_mcp_tool with server_name="carbon-mcp-server" and tool_name="get_carbon_component"
+     * If ANY Carbon MCP tool succeeds (even if other tools fail), set: \`carbonVerified: true, verificationSource: "carbon-mcp"\`
+     * Tool-specific errors (like "file not found") do NOT mean MCP is unavailable
+   
+   - **FALLBACK ONLY: Model memory (when MCP SERVER is unavailable)**
+     * Only use fallback if the MCP SERVER itself cannot be reached (connection error, server not running)
+     * Individual tool errors (file not found, invalid params) are NOT server unavailability
+     * If you successfully used ANY Carbon MCP tool (list_carbon_components, get_carbon_component, etc.), the server IS available
+     * Log \`⚠️ MCP UNAVAILABLE\` in the finding body ONLY if server connection failed
+     * Set: \`carbonVerified: false, verificationSource: "model-memory-fallback"\`
+     * Add: \`requiresDownstreamReview: true\`
+
+**Category 2: Non-Carbon Findings (DO NOT USE CARBON MCP)**
+   - Generic code quality issues that don't mention Carbon
+   - **Examples that MUST be Category 2:**
+     * "Function name should be more descriptive" → Category 2 (generic naming)
+     * "Missing test coverage for new components" → Category 2 (generic testing)
+     * "Potential memory leak in useEffect" → Category 2 (generic React issue)
+     * "Variable 'x' should be renamed" → Category 2 (generic naming)
+     * "Performance issue with large array" → Category 2 (generic performance)
+   
+   - Set: \`carbonVerified: false, verificationSource: "not-carbon-specific"\`
+
+**CRITICAL RULE:**
+If your finding title or body mentions ANY of these words, it MUST be Category 1:
+- DataTable, TextInput, Button, Checkbox, Dropdown, Modal, Accordion, Tabs, Toggle
+- @carbon, Carbon, carbon-react, carbon-icons
+- Any component name from Carbon Design System
+
+DO NOT mark findings about Carbon components as "not-carbon-specific" - this is incorrect!
+
+**IMPORTANT:** Verification fallback policy:
+- Carbon MCP tools are the primary and preferred verification method
+- If Carbon MCP is unavailable, use model memory as fallback
+- Log \`⚠️ MCP UNAVAILABLE\` when falling back to model memory
+- Flag fallback findings with \`requiresDownstreamReview: true\`
+- Fallback is NOT a failure - uptime is mandatory, continue with review
+- Do NOT exclude Carbon findings just because MCP is unavailable
 
 Return exactly this JSON between markers:
 
@@ -172,14 +225,21 @@ BEGIN_REVIEW_JSON
       "file": "repo-relative path",
       "line": 123,
       "title": "short title",
-      "body": "specific actionable comment",
+      "body": "specific actionable comment (include ⚠️ MCP UNAVAILABLE if using model memory fallback)",
       "carbonVerified": true,
-      "verificationSource": "carbon-builder|carbon-mcp|not-carbon-specific"
+      "verificationSource": "carbon-mcp|model-memory-fallback|not-carbon-specific",
+      "requiresDownstreamReview": false
     }
   ],
   "shouldPostInlineComments": true
 }
-END_REVIEW_JSON`;
+END_REVIEW_JSON
+
+Notes on verificationSource:
+- "carbon-mcp": Verified via Carbon MCP tools (primary verification method)
+- "model-memory-fallback": Used model memory when MCP unavailable (set requiresDownstreamReview: true, log ⚠️ MCP UNAVAILABLE)
+- "not-carbon-specific": Non-Carbon finding (generic code quality issue)
+`;
 }
 
 module.exports = {

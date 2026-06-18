@@ -41,9 +41,9 @@ async function reviewPRs() {
   }
 
   // Spec-compliant startup logging
-  console.log(`[AI PR Review] repo=${GITHUB_OWNER}/${GITHUB_REPO}`);
-  console.log(`[AI PR Review] selectedAgent=${REVIEW_AGENT}`);
-  console.log(`[AI PR Review] label=${REVIEW_LABEL}`);
+  console.log(`[Carbon-Monitor] repo=${GITHUB_OWNER}/${GITHUB_REPO}`);
+  console.log(`[Carbon-Monitor] selectedAgent=${REVIEW_AGENT}`);
+  console.log(`[Carbon-Monitor] label=${REVIEW_LABEL}`);
   
   // Validate environment
   if (!GITHUB_TOKEN) {

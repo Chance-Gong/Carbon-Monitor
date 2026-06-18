@@ -23,6 +23,30 @@ function looksCarbonSpecific(finding) {
     /ibm-products/,
     /cds-[a-z]/,           // Carbon class prefixes
     /bx-[a-z]/,            // Legacy Carbon class prefixes
+    /\bcarbon'?s?\s+\w+/,  // "Carbon DataTable", "Carbon's Button", etc. (word boundary)
+    /\bdatatable\b/,           // DataTable component (word boundary)
+    /\btablecontainer\b/,      // TableContainer component
+    /\btablehead\b/,           // TableHead component
+    /\btablerow\b/,            // TableRow component
+    /\btablecell\b/,           // TableCell component
+    /\baccordion\b/,           // Accordion component
+    /\bbreadcrumb\b/,          // Breadcrumb component
+    /\bcheckbox\b/,            // Checkbox component
+    /\bcombobox\b/,            // ComboBox component
+    /\bdropdown\b/,            // Dropdown component
+    /\bfileuploader\b/,        // FileUploader component
+    /\bnotification\b/,        // Notification component
+    /\bpagination\b/,          // Pagination component
+    /\bprogressindicator\b/,   // ProgressIndicator component
+    /\bradiobutton\b/,         // RadioButton component
+    /\bsearch\b/,              // Search component
+    /\btabs\b/,                // Tabs component
+    /\btag\b/,                 // Tag component
+    /\btextarea\b/,            // TextArea component
+    /\btextinput\b/,           // TextInput component
+    /\btoggle\b/,              // Toggle component
+    /\btooltip\b/,             // Tooltip component
+    /\buishell\b/,             // UIShell component
   ];
   
   // Check if any Carbon-specific pattern matches
@@ -48,20 +72,39 @@ function filterUnverifiedCarbonFindings(findings) {
   let filteredCount = 0;
   
   const filtered = findings.filter((finding) => {
-    // Non-Carbon-specific findings are always allowed
-    if (!looksCarbonSpecific(finding)) {
+    // Non-Carbon findings explicitly marked as such pass through
+    if (finding.verificationSource === 'not-carbon-specific') {
+      // But double-check: if it looks Carbon-specific, reject it
+      if (looksCarbonSpecific(finding)) {
+        carbonSpecificCount++;
+        filteredCount++;
+        console.log(`❌ FILTERED Carbon finding incorrectly marked as not-carbon-specific: ${finding.title}`);
+        console.log(`   Reason: Pattern detection says it's Carbon, but verificationSource=${finding.verificationSource}`);
+        return false;
+      }
       return true;
+    }
+    
+    // Check if finding looks Carbon-specific by pattern detection
+    if (!looksCarbonSpecific(finding)) {
+      return true;  // Not Carbon-specific, pass through
     }
     
     carbonSpecificCount++;
     
-    // STRICT: Carbon-specific findings MUST have carbon-mcp verification
-    const hasVerification = finding.carbonVerified === true &&
-      finding.verificationSource === 'carbon-mcp';
+    // STRICT: Carbon-specific findings MUST have proper verification source
+    // Accept: carbon-mcp (only valid source) or model-memory-fallback (with warning)
+    const isMcpVerified = finding.carbonVerified === true && finding.verificationSource === 'carbon-mcp';
+    const isFallback = finding.verificationSource === 'model-memory-fallback' && finding.requiresDownstreamReview === true;
     
-    if (hasVerification) {
+    if (isMcpVerified) {
       carbonVerifiedCount++;
-      console.log(`✅ Carbon finding verified via carbon-mcp: ${finding.title}`);
+      return true;
+    }
+    
+    if (isFallback) {
+      console.log(`⚠️  Model memory fallback used for: ${finding.title}`);
+      console.log(`   This finding requires downstream review (MCP was unavailable)`);
       return true;
     }
     
@@ -72,17 +115,28 @@ function filterUnverifiedCarbonFindings(findings) {
     return false;
   });
   
-  // Log summary
+  // Count fallback findings
+  const fallbackCount = filtered.filter(f =>
+    f.verificationSource === 'model-memory-fallback'
+  ).length;
+  
+  // Log summary only when there are Carbon-specific findings
   if (carbonSpecificCount > 0) {
     console.log(`\n📊 Carbon Verification Summary:`);
     console.log(`   Total findings: ${findings.length}`);
     console.log(`   Carbon-specific: ${carbonSpecificCount}`);
-    console.log(`   Verified via carbon-mcp: ${carbonVerifiedCount}`);
-    console.log(`   Filtered (unverified): ${filteredCount}`);
+    console.log(`   MCP-verified: ${carbonVerifiedCount}`);
+    console.log(`   Fallback (needs review): ${fallbackCount}`);
+    console.log(`   Filtered: ${filteredCount}`);
+    
+    if (fallbackCount > 0) {
+      console.log(`\n⚠️  ${fallbackCount} finding(s) used model memory fallback (MCP unavailable)`);
+      console.log(`   These findings require downstream human review`);
+    }
     
     if (filteredCount > 0) {
-      console.log(`\n⚠️  ${filteredCount} Carbon finding(s) were filtered due to missing carbon-mcp verification`);
-      console.log(`   To fix: Ensure Bob calls carbon-mcp MCP tools before making Carbon claims`);
+      console.log(`\n❌ ${filteredCount} Carbon finding(s) were filtered due to missing verification`);
+      console.log(`   To fix: Ensure agent uses Carbon MCP tools before making Carbon claims`);
     }
   }
   
@@ -240,6 +294,7 @@ function parseReviewOutput(agentOutput) {
     
     if (jsonStart === -1) {
       console.error('❌ No BEGIN_REVIEW_JSON marker found in agent output');
+      console.error('Agent output preview:', agentOutput.substring(0, 500));
       return null;
     }
     
@@ -259,6 +314,20 @@ function parseReviewOutput(agentOutput) {
       // Try to repair truncated JSON
       jsonStr = repairTruncatedJSON(jsonStr);
     }
+    
+    // Additional cleanup: remove any leading/trailing non-JSON content
+    // Look for the first '{' and last '}'
+    const firstBrace = jsonStr.indexOf('{');
+    const lastBrace = jsonStr.lastIndexOf('}');
+    
+    if (firstBrace === -1 || lastBrace === -1 || firstBrace >= lastBrace) {
+      console.error('❌ No valid JSON object found in extracted content');
+      console.error('Extracted content preview:', jsonStr.substring(0, 200));
+      return null;
+    }
+    
+    // Extract only the JSON object
+    jsonStr = jsonStr.substring(firstBrace, lastBrace + 1);
     
     // Parse JSON
     const review = JSON.parse(jsonStr);
@@ -308,6 +377,32 @@ function parseReviewOutput(agentOutput) {
     
   } catch (error) {
     console.error('❌ Error parsing review output:', error.message);
+    
+    // Show more context for debugging
+    if (error instanceof SyntaxError) {
+      console.error('\n📋 Debugging Information:');
+      console.error('Error type: JSON Syntax Error');
+      
+      // Try to show the problematic area
+      const match = error.message.match(/position (\d+)/);
+      if (match) {
+        const position = parseInt(match[1]);
+        const start = Math.max(0, position - 50);
+        const end = Math.min(agentOutput.length, position + 50);
+        console.error(`Context around error position ${position}:`);
+        console.error(agentOutput.substring(start, end));
+      }
+      
+      // Show first 500 chars of agent output
+      console.error('\nAgent output preview (first 500 chars):');
+      console.error(agentOutput.substring(0, 500));
+      
+      // Check for markers
+      const hasBegin = agentOutput.includes('BEGIN_REVIEW_JSON');
+      const hasEnd = agentOutput.includes('END_REVIEW_JSON');
+      console.error(`\nMarkers found: BEGIN=${hasBegin}, END=${hasEnd}`);
+    }
+    
     return null;
   }
 }

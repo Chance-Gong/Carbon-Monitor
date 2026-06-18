@@ -2,7 +2,7 @@ const { spawn } = require('child_process');
 
 /**
  * Run a CLI agent (bob, claude, or codex) with the given prompt
- * 
+ *
  * @param {Object} options - Configuration options
  * @param {string} options.agent - Agent type: 'bob', 'claude', or 'codex'
  * @param {string} options.cwd - Working directory for the agent
@@ -32,10 +32,10 @@ async function runAgent({ agent, cwd, prompt, timeout = 10 * 60 * 1000 }) {
       delete env.BOBSHELL_API_KEY;
     }
 
-    // Set MCP config paths for each agent to use the bundle's config
-    if (agent === 'bob') {
-      env.BOB_MCP_CONFIG = `${cwd}/.bob/mcp.json`;
-    } else if (agent === 'claude') {
+    // Set config paths for each agent to use the bundle's config
+    // Note: For Bob, we rely on global settings (~/.bob/settings.json) instead of overriding
+    // This ensures MCP servers are consistently available across all workspaces
+    if (agent === 'claude') {
       env.CLAUDE_MCP_CONFIG = `${cwd}/.claude/mcp_config.json`;
     } else if (agent === 'codex') {
       env.CODEX_MCP_CONFIG = `${cwd}/.codex/mcp_config.json`;
@@ -49,11 +49,19 @@ async function runAgent({ agent, cwd, prompt, timeout = 10 * 60 * 1000 }) {
     
     switch (agent) {
       case 'bob':
-        // Bob Shell CLI - print mode with auto-confirm
-        // Note: Bob doesn't support per-directory MCP config via .bob/mcp.json
-        // MCP servers must be configured globally with 'bob mcp add'
+        // Bob Shell CLI - advanced mode with MCP support
+        // MCP tools are only available in advanced mode
+        // Note: MCP servers are configured in local .bob/mcp.json in the bundle directory
         command = 'bob';
-        args = ['-p', prompt, '--yolo'];
+        args = [
+          '-p',
+          prompt,
+          '--yolo',
+          '--chat-mode',
+          'advanced',
+          '--allowed-mcp-server-names',
+          'carbon-mcp-server'
+        ];
         break;
         
       case 'claude':
