@@ -133,10 +133,12 @@ function buildReviewPrompt({ owner, repo }) {
 **You are reviewing a Carbon Design System PR. Use Carbon MCP tools to verify all Carbon component usage.**
 
 Review the PR bundle in the current directory:
-- PR_REVIEW_REQUEST.md
-- pr.json
-- files.json
-- diff.patch
+- PR_REVIEW_REQUEST.md (summary of the PR)
+- pr.json (PR metadata)
+- files.json (list of changed files)
+- diff.patch (unified diff of changes)
+
+**IMPORTANT: Only review the SOURCE CODE files listed in files.json. DO NOT review the bundle files themselves (diff.patch, pr.json, files.json, PR_REVIEW_REQUEST.md).**
 
 Primary objective:
 Find correctness, accessibility, test, migration, and Carbon Design System issues introduced by this PR.
@@ -168,10 +170,11 @@ You MUST categorize each finding correctly - there are ONLY TWO categories:
      * "DataTable missing required 'headers' prop" → Category 1 (mentions DataTable component)
      * "TextInput missing required 'labelText' prop" → Category 1 (mentions TextInput component)
      * "Using native HTML table instead of Carbon DataTable" → Category 1 (mentions DataTable)
-     * "Button missing iconDescription prop" → Category 1 (mentions Button component)
+     * "Carbon Button missing iconDescription prop" → Category 1 (mentions Carbon Button component)
      * "Using native checkbox instead of Carbon Checkbox" → Category 1 (mentions Checkbox)
      * "Invalid use of Carbon tokens" → Category 1 (mentions Carbon tokens)
      * "Missing @carbon/react import" → Category 1 (mentions @carbon package)
+     * "Button component should use Carbon Button" → Category 1 (mentions Carbon Button)
    
    - **REQUIRED: Use Carbon MCP tools to verify**
      * Available tools: list_carbon_components, get_carbon_component, list_carbon_icons, get_carbon_icon
@@ -192,17 +195,26 @@ You MUST categorize each finding correctly - there are ONLY TWO categories:
    - **Examples that MUST be Category 2:**
      * "Function name should be more descriptive" → Category 2 (generic naming)
      * "Missing test coverage for new components" → Category 2 (generic testing)
+     * "Missing test coverage for new title attribute behavior" → Category 2 (generic testing)
      * "Potential memory leak in useEffect" → Category 2 (generic React issue)
      * "Variable 'x' should be renamed" → Category 2 (generic naming)
      * "Performance issue with large array" → Category 2 (generic performance)
+     * "Consider adding title prop for consistency" → Category 2 (generic HTML attribute suggestion)
    
    - Set: \`carbonVerified: false, verificationSource: "not-carbon-specific"\`
 
 **CRITICAL RULE:**
 If your finding title or body mentions ANY of these words, it MUST be Category 1:
-- DataTable, TextInput, Button, Checkbox, Dropdown, Modal, Accordion, Tabs, Toggle
+- DataTable, TextInput, Button, Checkbox, Dropdown, Modal, Accordion, Tabs, Toggle, TextArea
 - @carbon, Carbon, carbon-react, carbon-icons
 - Any component name from Carbon Design System
+
+**VERIFICATION ENFORCEMENT:**
+If your finding mentions ANY Carbon component (DataTable, TextInput, Button, TextArea, etc.):
+- You MUST use carbon-mcp tools to verify
+- You MUST set verificationSource: "carbon-mcp" (or "model-memory-fallback" if MCP unavailable)
+- You CANNOT use verificationSource: "not-carbon-specific"
+- Violation will cause auto-correction and flag finding for human review
 
 DO NOT mark findings about Carbon components as "not-carbon-specific" - this is incorrect!
 

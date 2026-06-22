@@ -15,7 +15,7 @@ AI-powered PR review agent for the Carbon Design System repository. This tool au
 ## Architecture
 
 ```
-carbon-pr-review/
+Carbon-Monitor/
 ├── src/
 │   ├── index.js           # Main orchestrator
 │   ├── githubClient.js    # GitHub API operations
@@ -52,7 +52,7 @@ carbon-pr-review/
 
 2. Install dependencies:
 ```bash
-cd carbon-pr-review
+cd Carbon-Monitor
 npm install
 ```
 
@@ -324,13 +324,14 @@ Bob Shell requires IBM office/VPN access. If blocked:
 
 ### Project Structure
 ```
-src/
-├── index.js           # Main entry point, orchestrates workflow
-├── githubClient.js    # GitHub API wrapper
-├── reviewBundle.js    # Temp workspace management
-├── agentRunner.js     # CLI agent execution
-├── reviewParser.js    # JSON parsing and validation
-└── reviewPrompt.js    # Comment formatting
+Carbon-Monitor/
+└── src/
+    ├── index.js           # Main entry point, orchestrates workflow
+    ├── githubClient.js    # GitHub API wrapper
+    ├── reviewBundle.js    # Temp workspace management
+    ├── agentRunner.js     # CLI agent execution
+    ├── reviewParser.js    # JSON parsing and validation
+    └── reviewPrompt.js    # Comment formatting
 ```
 
 ### Adding New Features

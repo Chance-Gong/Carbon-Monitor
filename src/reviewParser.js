@@ -74,13 +74,20 @@ function filterUnverifiedCarbonFindings(findings) {
   const filtered = findings.filter((finding) => {
     // Non-Carbon findings explicitly marked as such pass through
     if (finding.verificationSource === 'not-carbon-specific') {
-      // But double-check: if it looks Carbon-specific, reject it
+      // But double-check: if it looks Carbon-specific, auto-correct it
       if (looksCarbonSpecific(finding)) {
         carbonSpecificCount++;
-        filteredCount++;
-        console.log(`❌ FILTERED Carbon finding incorrectly marked as not-carbon-specific: ${finding.title}`);
-        console.log(`   Reason: Pattern detection says it's Carbon, but verificationSource=${finding.verificationSource}`);
-        return false;
+        console.log(`⚠️  AUTO-CORRECTING: "${finding.title}" mentions Carbon but marked not-carbon-specific`);
+        console.log(`   Converting to model-memory-fallback and flagging for human review`);
+        
+        // Auto-correct the finding instead of filtering it out
+        finding.verificationSource = 'model-memory-fallback';
+        finding.requiresDownstreamReview = true;
+        finding.carbonVerified = false;
+        finding.body += '\n\n⚠️ **Note:** Auto-corrected from not-carbon-specific due to Carbon component mention. Requires human review.';
+        
+        // Count as fallback finding
+        return true;
       }
       return true;
     }

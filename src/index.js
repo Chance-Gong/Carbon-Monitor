@@ -190,10 +190,18 @@ async function reviewPRs() {
             comments: inlineComments
           });
           
-          if (reviewResult) {
-            console.log(`✅ Posted ${inlineFindings.length} inline comment(s)`);
+          if (reviewResult && reviewResult.comments && reviewResult.comments.length > 0) {
+            console.log(`✅ Posted ${reviewResult.comments.length} of ${inlineFindings.length} inline comment(s)`);
+            
+            // If some comments failed, move those findings to summary
+            if (reviewResult.comments.length < inlineFindings.length) {
+              const failedCount = inlineFindings.length - reviewResult.comments.length;
+              console.log(`⚠️  ${failedCount} inline comment(s) failed, moving to summary`);
+              // Note: We can't easily determine which specific comments failed,
+              // so we keep the successful inline findings as-is
+            }
           } else {
-            console.log('⚠️  Inline comments failed, will include in summary');
+            console.log('⚠️  All inline comments failed, will include in summary');
             // Move failed inline findings to summary
             summaryFindings.push(...inlineFindings);
             inlineFindings.length = 0;

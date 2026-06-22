@@ -102,20 +102,44 @@ function createGitHubClient(octokit) {
           return null;
         }
 
-        // Post as a review with inline comments
-        // Use 'position' parameter for diff positions (required for modified files)
-        const { data: review } = await octokit.rest.pulls.createReview({
-          owner,
-          repo,
-          pull_number: pullNumber,
-          commit_id: commitId,
-          event: 'COMMENT',
-          comments: validComments.map(c => ({
-            path: c.path,
-            body: c.body,
-            position: c.position    // Diff position (1-based index in the diff)
-          }))
-        });
+        // Post inline comments individually to ensure they appear on specific lines
+        // Using createReview with event: 'COMMENT' groups them in summary
+        // Instead, post each comment individually using createReviewComment
+        const postedComments = [];
+        for (const comment of validComments) {
+          try {
+            const { data: reviewComment } = await octokit.rest.pulls.createReviewComment({
+              owner,
+              repo,
+              pull_number: pullNumber,
+              commit_id: commitId,
+              path: comment.path,
+              body: comment.body,
+              position: comment.position
+            });
+            postedComments.push(reviewComment);
+            console.log(`✅ Posted inline comment on ${comment.path}:${comment.position}`);
+          } catch (commentError) {
+            console.error(`⚠️  Failed to post comment on ${comment.path}:${comment.position}:`, commentError.message);
+            if (commentError.response) {
+              console.error('   Response status:', commentError.response.status);
+              console.error('   Response data:', JSON.stringify(commentError.response.data, null, 2));
+            }
+            // Continue with other comments even if one fails
+          }
+        }
+        
+        // Return null if no comments were successfully posted
+        if (postedComments.length === 0) {
+          console.error('❌ No inline comments were successfully posted');
+          return null;
+        }
+        
+        // Return a summary object similar to createReview response
+        const review = {
+          id: postedComments.length > 0 ? postedComments[0].pull_request_review_id : null,
+          comments: postedComments
+        };
 
         return review;
       } catch (error) {

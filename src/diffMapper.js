@@ -41,17 +41,20 @@ function parseDiffLinePositions(diff) {
       continue;
     }
     
-    // Skip file metadata lines
-    if (line.startsWith('---') || line.startsWith('+++') || 
+    // Skip file metadata lines (but still count them in position)
+    if (line.startsWith('---') || line.startsWith('+++') ||
         line.startsWith('index ') || line.startsWith('new file') ||
         line.startsWith('deleted file')) {
       position++;
       continue;
     }
     
-    if (!currentFile) continue;
+    if (!currentFile) {
+      position++;
+      continue;
+    }
     
-    // Increment position first (GitHub uses 1-based positions)
+    // Increment position for this line (GitHub uses 1-based positions)
     position++;
     
     // Context line (unchanged)
@@ -87,6 +90,25 @@ function mapFindingToDiffPosition(finding, diff, files) {
     return null;
   }
   
+  // Filter out bundle files that shouldn't have inline comments
+  // Only exclude specific bundle files, not all files with these extensions
+  const excludedFilenames = [
+    'diff.patch',
+    'pr.json',
+    'files.json',
+    'PR_REVIEW_REQUEST.md'
+  ];
+  
+  const fileName = finding.file.split('/').pop();
+  const fileExt = finding.file.substring(finding.file.lastIndexOf('.')).toLowerCase();
+  
+  // Check if it's a bundle file or has a patch/diff extension
+  if (excludedFilenames.includes(fileName) ||
+      fileExt === '.patch' ||
+      fileExt === '.diff') {
+    return null;
+  }
+  
   // Check if file is in the changed files list
   // Handle both full paths and relative paths
   let changedFile = files.find(f => f.filename === finding.file);
@@ -108,7 +130,6 @@ function mapFindingToDiffPosition(finding, diff, files) {
   const lineMap = fileMap.get(matchedFilename);
   
   if (!lineMap) {
-    // File not found in diff (shouldn't happen if file is in changed files)
     return null;
   }
   
@@ -116,14 +137,14 @@ function mapFindingToDiffPosition(finding, diff, files) {
   const diffPosition = lineMap.get(finding.line);
   
   if (!diffPosition) {
-    // Line not found in diff - it's an unchanged line or outside the diff context
+    // Line not found in diff - it's outside the changed hunks
     return null;
   }
   
   // Return the actual diff position
   return {
     path: matchedFilename,
-    position: diffPosition  // Use actual diff position
+    position: diffPosition
   };
 }
 

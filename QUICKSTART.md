@@ -1,6 +1,6 @@
-# Carbon PR Review Agent - Quick Start Guide
+# Carbon-Monitor - Quick Start Guide
 
-Get the Carbon PR review agent running in 5 minutes!
+Get Carbon-Monitor running in 5 minutes!
 
 ## Prerequisites
 
@@ -101,19 +101,19 @@ docker-compose down
 
 ```bash
 # Build the image
-docker build -t carbon-pr-review .
+docker build -t carbon-monitor .
 
 # Run the container
 docker run -d \
-  --name carbon-pr-review \
+  --name carbon-monitor \
   --env-file .env \
-  carbon-pr-review
+  carbon-monitor
 
 # View logs
-docker logs -f carbon-pr-review
+docker logs -f carbon-monitor
 
 # Stop the container
-docker stop carbon-pr-review
+docker stop carbon-monitor
 ```
 
 ## Troubleshooting
@@ -174,10 +174,10 @@ To run the agent automatically:
 crontab -e
 
 # Add line to run every hour
-0 * * * * cd /path/to/carbon-pr-review && npm start >> /var/log/carbon-pr-review.log 2>&1
+0 * * * * cd /path/to/Carbon-Monitor && npm start >> /var/log/carbon-monitor.log 2>&1
 
 # Or run every 6 hours
-0 */6 * * * cd /path/to/carbon-pr-review && npm start >> /var/log/carbon-pr-review.log 2>&1
+0 */6 * * * cd /path/to/Carbon-Monitor && npm start >> /var/log/carbon-monitor.log 2>&1
 ```
 
 ## Next Steps
