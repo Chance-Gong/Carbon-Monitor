@@ -29,23 +29,13 @@ function looksCarbonSpecific(finding) {
     /\btablehead\b/,           // TableHead component
     /\btablerow\b/,            // TableRow component
     /\btablecell\b/,           // TableCell component
-    /\baccordion\b/,           // Accordion component
-    /\bbreadcrumb\b/,          // Breadcrumb component
     /\bcheckbox\b/,            // Checkbox component
     /\bcombobox\b/,            // ComboBox component
-    /\bdropdown\b/,            // Dropdown component
     /\bfileuploader\b/,        // FileUploader component
-    /\bnotification\b/,        // Notification component
-    /\bpagination\b/,          // Pagination component
     /\bprogressindicator\b/,   // ProgressIndicator component
     /\bradiobutton\b/,         // RadioButton component
-    /\bsearch\b/,              // Search component
-    /\btabs\b/,                // Tabs component
-    /\btag\b/,                 // Tag component
     /\btextarea\b/,            // TextArea component
     /\btextinput\b/,           // TextInput component
-    /\btoggle\b/,              // Toggle component
-    /\btooltip\b/,             // Tooltip component
     /\buishell\b/,             // UIShell component
   ];
   
@@ -72,10 +62,13 @@ function filterUnverifiedCarbonFindings(findings) {
   let filteredCount = 0;
   
   const filtered = findings.filter((finding) => {
+    const isDetectedCarbon = looksCarbonSpecific(finding);
+    const isExplicitCarbon = finding.verificationSource === 'carbon-mcp' || finding.verificationSource === 'model-memory-fallback';
+
     // Non-Carbon findings explicitly marked as such pass through
     if (finding.verificationSource === 'not-carbon-specific') {
       // But double-check: if it looks Carbon-specific, auto-correct it
-      if (looksCarbonSpecific(finding)) {
+      if (isDetectedCarbon) {
         carbonSpecificCount++;
         console.log(`⚠️  AUTO-CORRECTING: "${finding.title}" mentions Carbon but marked not-carbon-specific`);
         console.log(`   Converting to model-memory-fallback and flagging for human review`);
@@ -91,9 +84,8 @@ function filterUnverifiedCarbonFindings(findings) {
       }
       return true;
     }
-    
-    // Check if finding looks Carbon-specific by pattern detection
-    if (!looksCarbonSpecific(finding)) {
+
+    if (!isExplicitCarbon && !isDetectedCarbon) {
       return true;  // Not Carbon-specific, pass through
     }
     
