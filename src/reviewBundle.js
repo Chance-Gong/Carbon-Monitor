@@ -92,9 +92,12 @@ async function copyDirectory(src, dest) {
  * @returns {Promise<Object>} Bundle object with dir, prompt, and cleanup function
  */
 async function buildReviewBundle({ owner, repo, pr, diff, files }) {
-  // Create temp directory
+  // Create temp directory under /private/tmp (trusted by Bob Shell for MCP access).
+  // os.tmpdir() resolves to /var/folders/…/T on macOS which is NOT in Bob's
+  // trustedFolders.json, causing Bob to silently disable MCP tools.
+  const BOB_TRUSTED_TMP = '/private/tmp';
   const tempDir = await fs.mkdtemp(
-    path.join(os.tmpdir(), `${owner}__${repo}__pull-${pr.number}-`)
+    path.join(BOB_TRUSTED_TMP, `${owner}__${repo}__pull-${pr.number}-`)
   );
 
   try {
@@ -106,36 +109,9 @@ async function buildReviewBundle({ owner, repo, pr, diff, files }) {
       envContent
     );
 
-    // 2. Write Bob MCP config - Bob reads .bob/mcp.json from current working directory
+    // 2. Create .bob directory for rules (carbon-mcp is configured globally via streamable HTTP)
     const bobDir = path.join(tempDir, '.bob');
     await fs.mkdir(bobDir, { recursive: true });
-    
-    const bobMcpConfig = {
-      mcpServers: {
-        'carbon-mcp-server': {
-          command: 'npx',
-          args: ['-y', 'carbon-mcp'],
-          trust: true,
-          alwaysAllow: [
-            'search_docs',
-            'search_file_content',
-            'list_carbon_components',
-            'get_carbon_component',
-            'list_carbon_charts',
-            'get_carbon_chart',
-            'list_carbon_icons',
-            'get_carbon_icon',
-            'list_carbon_pictograms',
-            'get_carbon_pictogram'
-          ]
-        }
-      }
-    };
-    
-    await fs.writeFile(
-      path.join(bobDir, 'mcp.json'),
-      JSON.stringify(bobMcpConfig, null, 2)
-    );
 
     // 3. Write PR metadata
     await fs.writeFile(
@@ -207,7 +183,7 @@ See diff.patch for the full changes.
 You are reviewing a pull request in ${owner}/${repo}.
 
 Mandatory:
-- Use Carbon MCP tools (search_docs, search_file_content, list_carbon_components, get_carbon_component, list_carbon_charts, get_carbon_chart, list_carbon_icons, get_carbon_icon) for ALL Carbon Design System verification
+- Use Carbon MCP tools (docs_search, code_search, get_charts) for ALL Carbon Design System verification
 - Verify components, props, tokens, icons, patterns, and accessibility claims using MCP tools
 - Set verificationSource to "carbon-mcp" for all Carbon-verified findings
 - Set verificationSource to "not-carbon-specific" for generic code review findings
@@ -225,9 +201,8 @@ Mandatory:
       rules
     );
 
-    // Note: Bob will use the local .bob/mcp.json created above for MCP configuration
-    // This ensures carbon-mcp-server is available even when running from temp directories
-    console.log('Created local .bob/mcp.json with carbon-mcp-server configuration');
+    // Note: carbon-mcp is configured globally via streamable HTTP in ~/.bob/settings.json
+    // No local MCP config is needed in the bundle directory
 
     // 6. Create review prompt using the detailed prompt builder
     const prompt = buildReviewPrompt({ owner, repo });

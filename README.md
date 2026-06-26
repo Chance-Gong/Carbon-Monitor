@@ -60,6 +60,8 @@ npm install
 ```bash
 # For Bob (recommended)
 npm install -g @ibm/bob-shell
+or
+npm install -g bob-cli
 ```
 
 4. **Configure carbon-mcp for Bob** (required for Carbon verification):
@@ -214,14 +216,13 @@ This PR introduces new Carbon components with accessibility improvements...
 
 ## Carbon Verification
 
-⚠️ **Current Status:** The agent is configured for Carbon Builder MCP server integration, but **`@carbon/mcp-server` does not currently exist as a published package**.
+**Current Status:** The agent is configured for Carbon MCP globally at `~/.bob/settings/mcp.json`
 
 ### What This Means
 
-- ✅ **Infrastructure Ready**: MCP configuration files are created for each review
-- ✅ **Filtering Active**: Unverified Carbon claims are filtered out
-- ❌ **No Real Verification**: Agents cannot actually verify Carbon claims yet
-- 🔮 **Future-Ready**: Ready for when Carbon MCP server is built
+- **Infrastructure Ready**: MCP configuration files are created for each review
+- **Filtering Active**: Unverified Carbon claims are filtered out
+- **Verification**: Agents verify Carbon claims through globally configured Carbon MCP server
 
 ### Current Behavior
 

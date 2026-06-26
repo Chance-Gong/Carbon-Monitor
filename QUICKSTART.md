@@ -36,11 +36,39 @@ BOBSHELL_API_KEY=your_key_here  # if using bob
 
 Choose one:
 
-### Option A: Bob Shell (IBM Office/VPN)
+### Option A: Bob Shell (IBM Network/VPN required)
+
 ```bash
-npm install -g @ibm/bob-shell
-or
-npm install -g bob-cli
+npm install -g bobshell
+bob --version
+```
+
+Trust the directories Bob Shell needs for MCP tool access:
+```bash
+bob trust /private/tmp
+bob trust /path/to/Carbon-Monitor
+```
+
+Configure Carbon MCP by creating `~/.bob/settings/mcp.json`:
+```json
+{
+  "mcpServers": {
+    "carbon-mcp": {
+      "type": "streamable-http",
+      "url": "https://mcp.carbondesignsystem.com/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_IBM_JWT_TOKEN",
+        "X-MCP-Session": "YOUR_SESSION_ID"
+      }
+    }
+  }
+}
+```
+
+Verify MCP is connected:
+```bash
+bob mcp list
+# Should show: ✓ carbon-mcp (streamable-http) - Connected
 ```
 
 ### Option B: Claude (Works Anywhere)
@@ -123,7 +151,7 @@ docker stop carbon-monitor
 Install the CLI agent:
 ```bash
 # For Bob
-npm install -g @ibm/bob-shell
+npm install -g bobshell
 
 # For Claude
 npm install -g @anthropic-ai/claude-cli

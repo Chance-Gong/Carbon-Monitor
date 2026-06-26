@@ -149,16 +149,15 @@ Find correctness, accessibility, test, migration, and Carbon Design System issue
 
 **IMPORTANT: MCP Server Availability Check**
 Before marking ANY finding as "model-memory-fallback", you MUST verify:
-1. Did you successfully call list_carbon_components? → If YES, MCP IS AVAILABLE
-2. Did you successfully call get_carbon_component? → If YES, MCP IS AVAILABLE
+1. Did you successfully call code_search? → If YES, MCP IS AVAILABLE
+2. Did you successfully call docs_search? → If YES, MCP IS AVAILABLE
 3. If ANY Carbon MCP tool returned data (even if other tools failed), MCP IS AVAILABLE
 
 **Carbon MCP Verification Protocol:**
-For all Carbon component verification, use Carbon MCP tools:
-1. **list_carbon_components** - Search for components by name or category
-2. **get_carbon_component** - Get detailed props, variants, and usage for a specific component
-3. **list_carbon_icons** / **get_carbon_icon** - Verify icon usage
-4. **list_carbon_charts** / **get_carbon_chart** - Verify chart components
+For all Carbon component verification, use Carbon MCP tools (server name: \`carbon-mcp\`):
+1. **code_search** - Search for components, icons, pictograms, variants, and code examples
+2. **docs_search** - Search design/usage/accessibility documentation for components and tokens
+3. **get_charts** - Verify Carbon Charts usage, options, and variants
 
 **CRITICAL: If you successfully used ANY of these tools, set verificationSource: "carbon-mcp" for ALL Carbon findings.**
 
@@ -177,8 +176,8 @@ You MUST categorize each finding correctly - there are ONLY TWO categories:
      * "Button component should use Carbon Button" → Category 1 (mentions Carbon Button)
    
    - **REQUIRED: Use Carbon MCP tools to verify**
-     * Available tools: list_carbon_components, get_carbon_component, list_carbon_icons, get_carbon_icon
-     * Example: use_mcp_tool with server_name="carbon-mcp-server" and tool_name="get_carbon_component"
+     * Available tools: code_search, docs_search, get_charts (server name: carbon-mcp)
+     * Example: use_mcp_tool with server_name="carbon-mcp" and tool_name="code_search"
      * If ANY Carbon MCP tool succeeds (even if other tools fail), set: \`carbonVerified: true, verificationSource: "carbon-mcp"\`
      * Tool-specific errors (like "file not found") do NOT mean MCP is unavailable
    

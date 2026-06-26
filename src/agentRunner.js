@@ -51,7 +51,7 @@ async function runAgent({ agent, cwd, prompt, timeout = 10 * 60 * 1000 }) {
       case 'bob':
         // Bob Shell CLI - advanced mode with MCP support
         // MCP tools are only available in advanced mode
-        // Note: MCP servers are configured in local .bob/mcp.json in the bundle directory
+        // Note: carbon-mcp is configured globally via streamable HTTP in ~/.bob/settings.json
         command = 'bob';
         args = [
           '-p',
@@ -60,7 +60,7 @@ async function runAgent({ agent, cwd, prompt, timeout = 10 * 60 * 1000 }) {
           '--chat-mode',
           'advanced',
           '--allowed-mcp-server-names',
-          'carbon-mcp-server'
+          'carbon-mcp'
         ];
         break;
         
