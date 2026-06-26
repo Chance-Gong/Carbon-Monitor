@@ -40,6 +40,8 @@ Choose one:
 
 ```bash
 npm install -g bobshell
+or 
+npm install -g bob-cli
 bob --version
 ```
 
