@@ -10,37 +10,83 @@
  * @returns {boolean} - True if finding mentions Carbon-specific terms
  */
 function looksCarbonSpecific(finding) {
-  const text = `${finding.title} ${finding.body} ${finding.file}`.toLowerCase();
-  
-  // Carbon-specific patterns that require verification
-  const carbonPatterns = [
-    /@carbon\//,           // @carbon/react, @carbon/icons-react, etc.
-    /\$[a-z]+-\d+/,        // Carbon tokens like $spacing-05, $layer-01
+  const titleAndBody = `${finding.title} ${finding.body}`.toLowerCase();
+  const filePath = (finding.file || '').toLowerCase();
+
+  // Patterns that are unambiguously Carbon-specific regardless of context:
+  // - Carbon design system / API / token / icon claims in the finding text itself
+  // - @carbon/ imports referenced in the file path
+  // - Carbon CSS class prefixes (cds-, bx-) mentioned as the subject of the finding
+  // - Carbon SCSS tokens ($spacing-05, $layer-01, etc.)
+  const strongPatterns = [
     /carbon design system/,
     /carbon component/,
     /carbon token/,
     /carbon icon/,
+    /carbon prop/,
+    /carbon api/,
     /ibm-products/,
-    /cds-[a-z]/,           // Carbon class prefixes
-    /bx-[a-z]/,            // Legacy Carbon class prefixes
-    /\bcarbon'?s?\s+\w+/,  // "Carbon DataTable", "Carbon's Button", etc. (word boundary)
-    /\bdatatable\b/,           // DataTable component (word boundary)
-    /\btablecontainer\b/,      // TableContainer component
-    /\btablehead\b/,           // TableHead component
-    /\btablerow\b/,            // TableRow component
-    /\btablecell\b/,           // TableCell component
-    /\bcheckbox\b/,            // Checkbox component
-    /\bcombobox\b/,            // ComboBox component
-    /\bfileuploader\b/,        // FileUploader component
-    /\bprogressindicator\b/,   // ProgressIndicator component
-    /\bradiobutton\b/,         // RadioButton component
-    /\btextarea\b/,            // TextArea component
-    /\btextinput\b/,           // TextInput component
-    /\buishell\b/,             // UIShell component
+    /\$[a-z]+-\d+/,           // Carbon tokens like $spacing-05, $layer-01
+    /cds--[a-z]/,              // Carbon CSS class prefixes in finding text
+    /bx--[a-z]/,               // Legacy Carbon CSS class prefixes
+    /\bcarbon'?s?\s+\w+/,      // "Carbon DataTable", "Carbon's Button", etc.
   ];
-  
-  // Check if any Carbon-specific pattern matches
-  return carbonPatterns.some(pattern => pattern.test(text));
+
+  if (strongPatterns.some(p => p.test(titleAndBody))) {
+    return true;
+  }
+
+  // @carbon/ scoped packages: only flag if the file being reviewed is a Carbon
+  // package file, not just because suggestion text mentions a utility path
+  if (/@carbon\//.test(filePath)) {
+    return true;
+  }
+
+  // Component name patterns: only flag when the finding is making a claim about
+  // how the Carbon component should be used (wrong prop, wrong API, missing import,
+  // incorrect usage) — NOT when the component is merely the subject under test.
+  // We detect this by requiring an API-claim keyword alongside the component name.
+  const componentNames = [
+    /\bdatatable\b/,
+    /\btablecontainer\b/,
+    /\btablehead\b/,
+    /\btablerow\b/,
+    /\btablecell\b/,
+    /\bcheckbox\b/,
+    /\bcombobox\b/,
+    /\bfileuploader\b/,
+    /\bprogressindicator\b/,
+    /\bradiobutton\b/,
+    /\btextarea\b/,
+    /\btextinput\b/,
+    /\buishell\b/,
+    /\bfilterablemultiselect\b/,
+    /\bmultiselect\b/,
+    /\boverflowmenu\b/,
+  ];
+
+  const apiClaimKeywords = [
+    /\bprop\b/,
+    /\bprops\b/,
+    /\bapi\b/,
+    /\bimport\b/,
+    /\busage\b/,
+    /\btoken\b/,
+    /\baccessibility\b/,
+    /\baria\b/,
+    /\bmigrat/,
+    /\bdeprecated\b/,
+    /\brequired\b/,
+    /\bmissing.*import/,
+    /should use carbon/,
+    /use.*carbon/,
+    /carbon.*instead/,
+  ];
+
+  const mentionsComponent = componentNames.some(p => p.test(titleAndBody));
+  const makesApiClaim = apiClaimKeywords.some(p => p.test(titleAndBody));
+
+  return mentionsComponent && makesApiClaim;
 }
 
 /**
@@ -93,9 +139,28 @@ function filterUnverifiedCarbonFindings(findings) {
     
     // STRICT: Carbon-specific findings MUST have proper verification source
     // Accept: carbon-mcp (only valid source) or model-memory-fallback (with warning)
-    const isMcpVerified = finding.carbonVerified === true && finding.verificationSource === 'carbon-mcp';
+    let isMcpVerified = finding.carbonVerified === true && finding.verificationSource === 'carbon-mcp';
     const isFallback = finding.verificationSource === 'model-memory-fallback' && finding.requiresDownstreamReview === true;
-    
+
+    // HALLUCINATION CHECK: carbon-mcp findings must include a real quote from the tool
+    // response as evidence. Vague phrases like "Verified via code_search" or an empty
+    // string are treated as hallucinated verification and downgraded to fallback.
+    if (isMcpVerified) {
+      const evidence = (finding.mcpEvidence || '').trim();
+      const isVague = !evidence ||
+        /^(verified|confirmed|carbon mcp (confirm|verif)|mcp tools? (confirm|verif)|checked with)/i.test(evidence);
+
+      if (isVague) {
+        console.log(`⚠️  HALLUCINATED VERIFICATION detected for: "${finding.title}"`);
+        console.log(`   mcpEvidence is absent or non-specific — downgrading to model-memory-fallback`);
+        finding.verificationSource = 'model-memory-fallback';
+        finding.carbonVerified = false;
+        finding.requiresDownstreamReview = true;
+        finding.body += '\n\n⚠️ **Note:** Verification downgraded — no MCP tool evidence provided. Requires human review.';
+        isMcpVerified = false;
+      }
+    }
+
     if (isMcpVerified) {
       carbonVerifiedCount++;
       return true;

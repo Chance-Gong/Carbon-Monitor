@@ -148,7 +148,7 @@ async function reviewPRs() {
         });
         
         console.log(`\n✅ ${agent} review received`);
-        
+
         // Parse review output
         console.log('🔍 Parsing review output...');
         const review = parseReviewOutput(agentOutput);

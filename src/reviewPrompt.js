@@ -225,6 +225,22 @@ DO NOT mark findings about Carbon components as "not-carbon-specific" - this is 
 - Fallback is NOT a failure - uptime is mandatory, continue with review
 - Do NOT exclude Carbon findings just because MCP is unavailable
 
+**EVIDENCE REQUIREMENT:**
+For every finding where verificationSource is "carbon-mcp", you MUST populate the "mcpEvidence" field with a direct quote or excerpt from the actual MCP tool response that supports the finding. This must be real text returned by the tool — not a paraphrase, not a description of what the tool does, not a summary you wrote yourself.
+
+Examples of valid mcpEvidence:
+- "code_search returned: 'iconDescription: The description of the icon, used for screen reader accessibility. Required when hasIconOnly is true.'"
+- "docs_search returned: 'labelText - Required. Provide a label to describe the input for accessibility purposes.'"
+
+Examples of INVALID mcpEvidence (these will be treated as hallucinated verification):
+- "Carbon MCP confirms this component requires the prop"
+- "Verified via code_search"
+- "MCP tools confirm the usage pattern"
+- "" (empty string)
+- omitting the field entirely
+
+If you cannot provide a real quote from the tool response, you did not successfully verify with MCP. Set verificationSource: "model-memory-fallback" instead.
+
 Return exactly this JSON between markers:
 
 BEGIN_REVIEW_JSON
@@ -239,6 +255,7 @@ BEGIN_REVIEW_JSON
       "body": "specific actionable comment (include ⚠️ MCP UNAVAILABLE if using model memory fallback)",
       "carbonVerified": true,
       "verificationSource": "carbon-mcp|model-memory-fallback|not-carbon-specific",
+      "mcpEvidence": "direct quote from MCP tool response (required when verificationSource is carbon-mcp, omit otherwise)",
       "requiresDownstreamReview": false
     }
   ],
@@ -247,7 +264,7 @@ BEGIN_REVIEW_JSON
 END_REVIEW_JSON
 
 Notes on verificationSource:
-- "carbon-mcp": Verified via Carbon MCP tools (primary verification method)
+- "carbon-mcp": Verified via Carbon MCP tools — mcpEvidence MUST contain a direct quote from the tool response
 - "model-memory-fallback": Used model memory when MCP unavailable (set requiresDownstreamReview: true, log ⚠️ MCP UNAVAILABLE)
 - "not-carbon-specific": Non-Carbon finding (generic code quality issue)
 `;
