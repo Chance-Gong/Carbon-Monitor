@@ -102,108 +102,67 @@ function filterUnverifiedCarbonFindings(findings) {
     console.log('⚠️  Carbon verification filter DISABLED (test mode)');
     return { filtered: findings, stats: { total: findings.length, filtered: 0, carbonVerified: 0 } };
   }
-  
+
   let carbonSpecificCount = 0;
   let carbonVerifiedCount = 0;
   let filteredCount = 0;
-  
-  const filtered = findings.filter((finding) => {
-    const isDetectedCarbon = looksCarbonSpecific(finding);
-    const isExplicitCarbon = finding.verificationSource === 'carbon-mcp' || finding.verificationSource === 'model-memory-fallback';
 
-    // Non-Carbon findings explicitly marked as such pass through
+  const filtered = findings.filter((finding) => {
+    // Non-Carbon findings pass through unconditionally — no auto-correction.
+    // The agent is responsible for correct categorisation per the prompt rules.
     if (finding.verificationSource === 'not-carbon-specific') {
-      // But double-check: if it looks Carbon-specific, auto-correct it
-      if (isDetectedCarbon) {
-        carbonSpecificCount++;
-        console.log(`⚠️  AUTO-CORRECTING: "${finding.title}" mentions Carbon but marked not-carbon-specific`);
-        console.log(`   Converting to model-memory-fallback and flagging for human review`);
-        
-        // Auto-correct the finding instead of filtering it out
-        finding.verificationSource = 'model-memory-fallback';
-        finding.requiresDownstreamReview = true;
-        finding.carbonVerified = false;
-        finding.body += '\n\n⚠️ **Note:** Auto-corrected from not-carbon-specific due to Carbon component mention. Requires human review.';
-        
-        // Count as fallback finding
-        return true;
-      }
       return true;
     }
 
-    if (!isExplicitCarbon && !isDetectedCarbon) {
-      return true;  // Not Carbon-specific, pass through
-    }
-    
-    carbonSpecificCount++;
-    
-    // STRICT: Carbon-specific findings MUST have proper verification source
-    // Accept: carbon-mcp (only valid source) or model-memory-fallback (with warning)
-    let isMcpVerified = finding.carbonVerified === true && finding.verificationSource === 'carbon-mcp';
-    const isFallback = finding.verificationSource === 'model-memory-fallback' && finding.requiresDownstreamReview === true;
+    // carbon-mcp is the only valid verification source for Carbon findings.
+    const isMcpVerified = finding.carbonVerified === true && finding.verificationSource === 'carbon-mcp';
 
-    // HALLUCINATION CHECK: carbon-mcp findings must include a real quote from the tool
-    // response as evidence. Vague phrases like "Verified via code_search" or an empty
-    // string are treated as hallucinated verification and downgraded to fallback.
+    if (!isMcpVerified && !looksCarbonSpecific(finding)) {
+      return true; // Not Carbon-specific, pass through
+    }
+
+    carbonSpecificCount++;
+
+    // HALLUCINATION CHECK: carbon-mcp findings must include a real quote from the
+    // tool response as evidence. Vague phrases or empty strings are treated as
+    // hallucinated verification and the finding is filtered out.
     if (isMcpVerified) {
       const evidence = (finding.mcpEvidence || '').trim();
       const isVague = !evidence ||
         /^(verified|confirmed|carbon mcp (confirm|verif)|mcp tools? (confirm|verif)|checked with)/i.test(evidence);
 
       if (isVague) {
-        console.log(`⚠️  HALLUCINATED VERIFICATION detected for: "${finding.title}"`);
-        console.log(`   mcpEvidence is absent or non-specific — downgrading to model-memory-fallback`);
-        finding.verificationSource = 'model-memory-fallback';
-        finding.carbonVerified = false;
-        finding.requiresDownstreamReview = true;
-        finding.body += '\n\n⚠️ **Note:** Verification downgraded — no MCP tool evidence provided. Requires human review.';
-        isMcpVerified = false;
+        filteredCount++;
+        console.log(`❌ FILTERED hallucinated verification for: "${finding.title}"`);
+        console.log(`   mcpEvidence is absent or non-specific — omitting finding`);
+        return false;
       }
-    }
 
-    if (isMcpVerified) {
       carbonVerifiedCount++;
       return true;
     }
-    
-    if (isFallback) {
-      console.log(`⚠️  Model memory fallback used for: ${finding.title}`);
-      console.log(`   This finding requires downstream review (MCP was unavailable)`);
-      return true;
-    }
-    
-    // REJECT: Unverified Carbon claims are not allowed
+
+    // REJECT: Unverified Carbon claims are not allowed — per spec, omit them.
     filteredCount++;
-    console.log(`❌ FILTERED unverified Carbon finding: ${finding.title}`);
+    console.log(`❌ FILTERED unverified Carbon finding: "${finding.title}"`);
     console.log(`   Reason: carbonVerified=${finding.carbonVerified}, verificationSource=${finding.verificationSource}`);
     return false;
   });
-  
-  // Count fallback findings
-  const fallbackCount = filtered.filter(f =>
-    f.verificationSource === 'model-memory-fallback'
-  ).length;
-  
+
   // Log summary only when there are Carbon-specific findings
   if (carbonSpecificCount > 0) {
     console.log(`\n📊 Carbon Verification Summary:`);
     console.log(`   Total findings: ${findings.length}`);
     console.log(`   Carbon-specific: ${carbonSpecificCount}`);
     console.log(`   MCP-verified: ${carbonVerifiedCount}`);
-    console.log(`   Fallback (needs review): ${fallbackCount}`);
-    console.log(`   Filtered: ${filteredCount}`);
-    
-    if (fallbackCount > 0) {
-      console.log(`\n⚠️  ${fallbackCount} finding(s) used model memory fallback (MCP unavailable)`);
-      console.log(`   These findings require downstream human review`);
-    }
-    
+    console.log(`   Filtered (unverified): ${filteredCount}`);
+
     if (filteredCount > 0) {
-      console.log(`\n❌ ${filteredCount} Carbon finding(s) were filtered due to missing verification`);
-      console.log(`   To fix: Ensure agent uses Carbon MCP tools before making Carbon claims`);
+      console.log(`\n❌ ${filteredCount} Carbon finding(s) filtered — missing or hallucinated MCP verification`);
+      console.log(`   To fix: Ensure agent uses Carbon MCP tools and quotes tool response in mcpEvidence`);
     }
   }
-  
+
   return {
     filtered,
     stats: {

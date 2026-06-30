@@ -108,7 +108,20 @@ async function runAgent({ agent, cwd, prompt, timeout = 10 * 60 * 1000 }) {
     // Handle process completion
     proc.on('close', (code) => {
       process.stdout.write('\n'); // New line after progress dots
-      
+
+      // Write raw agent output to bundle directory for inspection (sync so it
+      // completes before resolve/reject hands control back to the caller)
+      const fs = require('fs');
+      const path = require('path');
+      try {
+        fs.writeFileSync(path.join(cwd, 'agent-output.txt'), stdout);
+        if (stderr) {
+          fs.writeFileSync(path.join(cwd, 'agent-stderr.txt'), stderr);
+        }
+      } catch (_) {
+        // Non-fatal — don't block the review if logging fails
+      }
+
       if (code === 0) {
         resolve(stdout);
       } else {

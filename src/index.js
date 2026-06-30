@@ -144,7 +144,7 @@ async function reviewPRs() {
           agent,
           cwd: bundle.dir,
           prompt: bundle.prompt,
-          timeout: 5 * 60 * 1000 // 5 minutes
+          timeout: 10 * 60 * 1000 // 10 minutes per spec
         });
         
         console.log(`\n✅ ${agent} review received`);
@@ -192,17 +192,22 @@ async function reviewPRs() {
           
           if (reviewResult && reviewResult.comments && reviewResult.comments.length > 0) {
             console.log(`✅ Posted ${reviewResult.comments.length} of ${inlineFindings.length} inline comment(s)`);
-            
-            // If some comments failed, move those findings to summary
+
+            // Move findings whose inline comment failed into summaryFindings
             if (reviewResult.comments.length < inlineFindings.length) {
-              const failedCount = inlineFindings.length - reviewResult.comments.length;
-              console.log(`⚠️  ${failedCount} inline comment(s) failed, moving to summary`);
-              // Note: We can't easily determine which specific comments failed,
-              // so we keep the successful inline findings as-is
+              const postedKeys = new Set(
+                reviewResult.comments.map(c => `${c.path}:${c.position}`)
+              );
+              const failedFindings = inlineFindings.filter(f =>
+                !postedKeys.has(`${f.diffPosition.path}:${f.diffPosition.position}`)
+              );
+              if (failedFindings.length > 0) {
+                console.log(`⚠️  ${failedFindings.length} inline comment(s) failed, moving to summary`);
+                summaryFindings.push(...failedFindings);
+              }
             }
           } else {
             console.log('⚠️  All inline comments failed, will include in summary');
-            // Move failed inline findings to summary
             summaryFindings.push(...inlineFindings);
             inlineFindings.length = 0;
           }
