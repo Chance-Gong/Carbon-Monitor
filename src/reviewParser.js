@@ -316,6 +316,22 @@ function parseReviewOutput(agentOutput) {
     const jsonStart = agentOutput.indexOf('BEGIN_REVIEW_JSON');
     
     if (jsonStart === -1) {
+      // Check if Bob called attempt_completion with a prose summary instead of
+      // writing the JSON block. This happens when the agent finds no issues and
+      // short-circuits to attempt_completion. Extract the prose as summaryMarkdown
+      // and return a valid empty-findings review rather than failing entirely.
+      const completionMatch = agentOutput.match(/\[using tool attempt_completion:.*?\]\s*---output---\s*([\s\S]+?)\s*---output---/);
+      if (completionMatch) {
+        const prose = completionMatch[1].trim();
+        console.warn('⚠️  No BEGIN_REVIEW_JSON marker — agent used attempt_completion. Synthesising empty-findings review.');
+        return {
+          summaryMarkdown: prose,
+          findings: [],
+          shouldPostInlineComments: false,
+          verificationStats: { total: 0, carbonSpecific: 0, carbonVerified: 0, filtered: 0 }
+        };
+      }
+
       console.error('❌ No BEGIN_REVIEW_JSON marker found in agent output');
       console.error('Agent output preview:', agentOutput.substring(0, 500));
       return null;

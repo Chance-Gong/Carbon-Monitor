@@ -156,7 +156,11 @@ async function reviewPRs() {
         if (!review) {
           console.error('❌ Failed to parse review output');
           console.error('Skipping this PR');
-          await bundle.cleanup();
+          if (process.env.GITHUB_AI_AGENT_KEEP_ARTIFACTS !== 'true') {
+            await bundle.cleanup();
+          } else {
+            console.error('📦 Keeping artifacts for debugging:', bundle.dir);
+          }
           continue;
         }
         

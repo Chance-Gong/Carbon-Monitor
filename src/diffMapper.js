@@ -19,8 +19,10 @@ function parseDiffLinePositions(diff) {
   
   for (const line of lines) {
     // File header: diff --git a/path b/path
+    // GitHub resets position per file; the diff --git line itself is not counted.
+    // index, new file mode, deleted file mode, ---, +++ are also not counted —
+    // GitHub position starts at 1 for the first @@ hunk header of each file.
     if (line.startsWith('diff --git')) {
-      // Extract the b/ path (the new file path)
       const match = line.match(/\sb\/(.+)$/);
       if (match) {
         currentFile = match[1];
@@ -30,7 +32,16 @@ function parseDiffLinePositions(diff) {
       continue;
     }
     
+    // Skip file metadata lines — do NOT count these in position.
+    // GitHub position counting begins at the @@ hunk header, not before it.
+    if (line.startsWith('---') || line.startsWith('+++') ||
+        line.startsWith('index ') || line.startsWith('new file') ||
+        line.startsWith('deleted file')) {
+      continue;
+    }
+
     // Hunk header: @@ -old_start,old_count +new_start,new_count @@
+    // This is position 1 (or the first position of a subsequent hunk).
     if (line.startsWith('@@')) {
       const match = line.match(/@@ -(\d+),?\d* \+(\d+),?\d* @@/);
       if (match) {
@@ -41,18 +52,7 @@ function parseDiffLinePositions(diff) {
       continue;
     }
     
-    // Skip file metadata lines (but still count them in position)
-    if (line.startsWith('---') || line.startsWith('+++') ||
-        line.startsWith('index ') || line.startsWith('new file') ||
-        line.startsWith('deleted file')) {
-      position++;
-      continue;
-    }
-    
-    if (!currentFile) {
-      position++;
-      continue;
-    }
+    if (!currentFile) continue;
     
     // Increment position for this line (GitHub uses 1-based positions)
     position++;

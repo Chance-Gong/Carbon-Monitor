@@ -142,7 +142,8 @@ async function buildReviewBundle({ owner, repo, pr, diff, files }) {
       diffToWrite
     );
 
-    // 6. Write PR review request summary
+    // 6. Write PR review request summary — embed diff directly so the agent
+    // needs only ONE file read to get all context, reducing coin spend.
     const prSummary = `# PR Review Request
 
 **Repository:** ${owner}/${repo}
@@ -151,6 +152,7 @@ async function buildReviewBundle({ owner, repo, pr, diff, files }) {
 **Author:** ${pr.user.login}
 **Created:** ${pr.created_at}
 **Updated:** ${pr.updated_at}
+**Review Date:** ${new Date().toISOString().split('T')[0]}
 
 ## Description
 
@@ -160,16 +162,11 @@ ${pr.body || 'No description provided'}
 
 ${files.map(f => `- \`${f.filename}\` (+${f.additions}/-${f.deletions})`).join('\n')}
 
-## Review Instructions
+## Diff
 
-Review the changes in this PR for:
-- Correctness issues
-- Accessibility issues
-- Test coverage
-- Migration concerns
-- Carbon Design System compliance
-
-See diff.patch for the full changes.
+\`\`\`diff
+${diffToWrite}
+\`\`\`
 `;
 
     await fs.writeFile(
