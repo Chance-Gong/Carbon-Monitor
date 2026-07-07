@@ -22,6 +22,51 @@ const TEST_OWNER = 'Chance-Gong';
 const TEST_REPO = 'carbon-pr-review-test';
 
 /**
+ * Reconstruct file content from a GitHub PR file object.
+ * Only works for added files — strips the leading '+' from each patch line.
+ * Returns null for modified/deleted files or if no patch is available.
+ *
+ * @param {Object} file - GitHub PR file object with patch property
+ * @returns {string|null}
+ */
+function extractFileContent(file) {
+  if (!file.patch) return null;
+  if (file.status !== 'added') return null;
+
+  const lines = file.patch.split('\n');
+  const contentLines = [];
+
+  for (const line of lines) {
+    if (line.startsWith('@@')) continue;       // hunk header
+    if (line.startsWith('+')) {
+      contentLines.push(line.slice(1));        // added line — strip the '+'
+    }
+  }
+
+  return contentLines.join('\n');
+}
+
+/**
+ * Build a unified diff string from all PR files for embedding in the test PR.
+ * Used to preserve the real +/- diff for modified files that can't be
+ * reconstructed as full files.
+ *
+ * @param {Array} files - GitHub PR file objects
+ * @returns {string} - Unified diff text
+ */
+function buildOriginalDiff(files) {
+  return files
+    .filter(f => f.patch)
+    .map(f => {
+      const header = f.status === 'added'
+        ? `diff --git a/${f.filename} b/${f.filename}\nnew file mode 100644\n--- /dev/null\n+++ b/${f.filename}`
+        : `diff --git a/${f.filename} b/${f.filename}\n--- a/${f.filename}\n+++ b/${f.filename}`;
+      return `${header}\n${f.patch}`;
+    })
+    .join('\n\n');
+}
+
+/**
  * Create a test PR from a Carbon PR
  */
 async function createTestPR(carbonPRNumber) {
@@ -53,17 +98,8 @@ async function createTestPR(carbonPRNumber) {
     console.log(`   ✅ ${carbonPR.title}`);
     console.log(`   👤 by @${carbonPR.user.login}\n`);
 
-    // Step 2: Fetch diff
-    console.log('📄 Step 2: Fetching diff...');
-    const diff = await client.fetchPRDiff({
-      owner: CARBON_OWNER,
-      repo: CARBON_REPO,
-      pullNumber: carbonPRNumber
-    });
-    console.log(`   ✅ Diff size: ${diff.length} characters\n`);
-
-    // Step 3: Fetch files
-    console.log('📁 Step 3: Fetching changed files...');
+    // Step 2: Fetch files
+    console.log('📁 Step 2: Fetching changed files...');
     const files = await client.fetchPRFiles({
       owner: CARBON_OWNER,
       repo: CARBON_REPO,
@@ -71,8 +107,8 @@ async function createTestPR(carbonPRNumber) {
     });
     console.log(`   ✅ ${files.length} files changed\n`);
 
-    // Step 4: Get default branch of test repo
-    console.log('� Step 4: Getting test repository info...');
+    // Step 3: Get default branch of test repo
+    console.log('🔍 Step 3: Getting test repository info...');
     const { data: testRepo } = await octokit.rest.repos.get({
       owner: TEST_OWNER,
       repo: TEST_REPO
@@ -80,8 +116,8 @@ async function createTestPR(carbonPRNumber) {
     const baseBranch = testRepo.default_branch;
     console.log(`   ✅ Base branch: ${baseBranch}\n`);
 
-    // Step 5: Get base branch SHA
-    console.log('🔍 Step 5: Getting base branch SHA...');
+    // Step 4: Get base branch SHA
+    console.log('🔍 Step 4: Getting base branch SHA...');
     const { data: baseRef } = await octokit.rest.git.getRef({
       owner: TEST_OWNER,
       repo: TEST_REPO,
@@ -90,9 +126,9 @@ async function createTestPR(carbonPRNumber) {
     const baseSha = baseRef.object.sha;
     console.log(`   ✅ Base SHA: ${baseSha.substring(0, 7)}\n`);
 
-    // Step 6: Create new branch
+    // Step 5: Create new branch
     const branchName = `test-carbon-pr-${carbonPRNumber}`;
-    console.log(`🌿 Step 6: Creating branch '${branchName}'...`);
+    console.log(`🌿 Step 5: Creating branch '${branchName}'...`);
     
     try {
       // Try to delete existing branch first
@@ -120,84 +156,54 @@ async function createTestPR(carbonPRNumber) {
       process.exit(1);
     }
 
-    // Step 7: Create test files
-    console.log('📝 Step 7: Creating test files...');
+    // Step 6: Commit new source files at their real paths + original diff for modified files
+    console.log(`📝 Step 6: Committing source files...`);
 
-    // Create summary file
-    const summaryContent = `# Test PR from Carbon PR ${carbonPRNumber}
-
-## Original PR Info
-- **Title**: ${carbonPR.title}
-- **PR Number**: ${carbonPRNumber}
-- **Status**: ${carbonPR.state}
-
-## Changes
-- **Files**: ${files.length}
-- **Additions**: +${carbonPR.additions}
-- **Deletions**: -${carbonPR.deletions}
-
-## Description
-${carbonPR.body || 'No description provided'}
-
-## Files Changed
-${files.map(f => `- ${f.filename} (+${f.additions}/-${f.deletions})`).join('\n')}
-
-## Testing Instructions
-1. Review the changes in this PR
-2. Run the review agent: \`npm start\`
-3. Check the comments and review summary
-4. All reviews will be posted to this repository
-
----
-*This is a test PR created from Carbon Design System PR ${carbonPRNumber} for local review testing.*
-`;
-
-    await octokit.rest.repos.createOrUpdateFileContents({
-      owner: TEST_OWNER,
-      repo: TEST_REPO,
-      path: `carbon-pr-test/PR-${carbonPRNumber}-summary.md`,
-      message: `Add summary for Carbon PR ${carbonPRNumber}`,
-      content: Buffer.from(summaryContent).toString('base64'),
-      branch: branchName
-    });
-    console.log(`   ✅ Created summary file`);
-
-    // Create sample files from the Carbon PR
-    for (let i = 0; i < Math.min(3, files.length); i++) {
-      const file = files[i];
-      const fileName = file.filename.split('/').pop(); // Get just the filename
-      const sampleContent = `// Sample from Carbon PR ${carbonPRNumber}
-// Original file: ${file.filename}
-// Status: ${file.status}
-// Changes: +${file.additions}/-${file.deletions}
-
-${file.patch || '// No patch available'}
-`;
+    let committed = 0;
+    for (const file of files) {
+      const fileContent = extractFileContent(file);
+      if (fileContent === null) {
+        console.log(`   ⏭️  Skipped (modified/no patch, covered by ORIGINAL_DIFF.patch): ${file.filename}`);
+        continue;
+      }
 
       await octokit.rest.repos.createOrUpdateFileContents({
         owner: TEST_OWNER,
         repo: TEST_REPO,
-        path: `carbon-pr-test/${i + 1}-${fileName}`,
-        message: `Add sample file ${i + 1} from Carbon PR ${carbonPRNumber}`,
-        content: Buffer.from(sampleContent).toString('base64'),
+        path: file.filename,
+        message: `Add ${file.filename} from Carbon PR ${carbonPRNumber}`,
+        content: Buffer.from(fileContent).toString('base64'),
         branch: branchName
       });
-      console.log(`   ✅ Created sample file: ${fileName}`);
+      committed++;
+      console.log(`   ✅ ${file.filename}`);
     }
 
-    // Save diff file
+    // Always commit the original diff and file list so the review runner can use
+    // them instead of GitHub's generated diff (which misses - lines for modified files)
+    const originalDiff = buildOriginalDiff(files);
     await octokit.rest.repos.createOrUpdateFileContents({
       owner: TEST_OWNER,
       repo: TEST_REPO,
-      path: `carbon-pr-test/carbon-pr-${carbonPRNumber}.patch`,
-      message: `Add diff from Carbon PR ${carbonPRNumber}`,
-      content: Buffer.from(diff).toString('base64'),
+      path: 'ORIGINAL_DIFF.patch',
+      message: `Add original diff from Carbon PR ${carbonPRNumber}`,
+      content: Buffer.from(originalDiff).toString('base64'),
       branch: branchName
     });
-    console.log(`   ✅ Created diff file\n`);
 
-    // Step 8: Create PR
-    console.log('🎯 Step 8: Creating PR...');
+    const filesJson = JSON.stringify(files, null, 2);
+    await octokit.rest.repos.createOrUpdateFileContents({
+      owner: TEST_OWNER,
+      repo: TEST_REPO,
+      path: 'ORIGINAL_FILES.json',
+      message: `Add original file list from Carbon PR ${carbonPRNumber}`,
+      content: Buffer.from(filesJson).toString('base64'),
+      branch: branchName
+    });
+    console.log(`   ✅ ORIGINAL_DIFF.patch + ORIGINAL_FILES.json (${committed} new files + ${files.length - committed} modified)\n`);
+
+    // Step 7: Create PR
+    console.log('🎯 Step 7: Creating PR...');
     try {
       const { data: newPR } = await octokit.rest.pulls.create({
         owner: TEST_OWNER,

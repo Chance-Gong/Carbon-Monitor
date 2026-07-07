@@ -109,12 +109,23 @@ async function runAgent({ agent, cwd, prompt, timeout = 10 * 60 * 1000 }) {
     proc.on('close', (code) => {
       process.stdout.write('\n'); // New line after progress dots
 
-      // Write raw agent output to bundle directory for inspection (sync so it
-      // completes before resolve/reject hands control back to the caller)
+      // Write agent output to bundle directory for inspection (sync so it
+      // completes before resolve/reject hands control back to the caller).
+      // Bob advanced mode emits a live-stream phase followed by a final-turn
+      // replay. When ## Step 1 appears more than once the output contains a
+      // duplicate mid-stream prefix — trim to the last occurrence so the saved
+      // file shows only the clean final turn. When it appears once (or not at
+      // all) the output is already clean and is saved as-is.
       const fs = require('fs');
       const path = require('path');
       try {
-        fs.writeFileSync(path.join(cwd, 'agent-output.txt'), stdout);
+        const step1 = '## Step 1';
+        const firstStep1 = stdout.indexOf(step1);
+        const lastStep1 = stdout.lastIndexOf(step1);
+        const trimmed = lastStep1 > firstStep1
+          ? stdout.slice(lastStep1)
+          : stdout;
+        fs.writeFileSync(path.join(cwd, 'agent-output.txt'), trimmed);
         if (stderr) {
           fs.writeFileSync(path.join(cwd, 'agent-stderr.txt'), stderr);
         }

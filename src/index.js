@@ -106,23 +106,49 @@ async function reviewPRs() {
         console.log(`   Created: ${new Date(pr.created_at).toLocaleDateString()}`);
         console.log(`${'='.repeat(80)}\n`);
         
-        // Fetch PR diff
+        // Fetch PR diff — prefer ORIGINAL_DIFF.patch if present (test PRs created
+        // by create-test-pr.js embed the real Carbon diff there to preserve - lines)
         console.log('📄 Fetching PR diff...');
-        const diff = await client.fetchPRDiff({
-          owner: GITHUB_OWNER,
-          repo: GITHUB_REPO,
-          pullNumber: pr.number
-        });
-        console.log(`✅ Diff: ${diff.length} characters`);
+        let diff;
+        try {
+          const { data: patchFile } = await octokit.rest.repos.getContent({
+            owner: GITHUB_OWNER,
+            repo: GITHUB_REPO,
+            path: 'ORIGINAL_DIFF.patch',
+            ref: pr.head.sha
+          });
+          diff = Buffer.from(patchFile.content, 'base64').toString('utf8');
+          console.log(`✅ Diff: ${diff.length} characters (from ORIGINAL_DIFF.patch)`);
+        } catch {
+          diff = await client.fetchPRDiff({
+            owner: GITHUB_OWNER,
+            repo: GITHUB_REPO,
+            pullNumber: pr.number
+          });
+          console.log(`✅ Diff: ${diff.length} characters`);
+        }
         
-        // Fetch changed files
+        // Fetch changed files — prefer ORIGINAL_FILES.json if present (test PRs
+        // created by create-test-pr.js store the real Carbon file list there)
         console.log('📁 Fetching changed files...');
-        const files = await client.fetchPRFiles({
-          owner: GITHUB_OWNER,
-          repo: GITHUB_REPO,
-          pullNumber: pr.number
-        });
-        console.log(`✅ Files: ${files.length} changed`);
+        let files;
+        try {
+          const { data: filesFile } = await octokit.rest.repos.getContent({
+            owner: GITHUB_OWNER,
+            repo: GITHUB_REPO,
+            path: 'ORIGINAL_FILES.json',
+            ref: pr.head.sha
+          });
+          files = JSON.parse(Buffer.from(filesFile.content, 'base64').toString('utf8'));
+          console.log(`✅ Files: ${files.length} changed (from ORIGINAL_FILES.json)`);
+        } catch {
+          files = await client.fetchPRFiles({
+            owner: GITHUB_OWNER,
+            repo: GITHUB_REPO,
+            pullNumber: pr.number
+          });
+          console.log(`✅ Files: ${files.length} changed`);
+        }
         files.forEach(f => console.log(`   - ${f.filename} (+${f.additions}/-${f.deletions})`));
         
         // Build review bundle

@@ -134,25 +134,71 @@ function buildReviewPrompt({ owner, repo }) {
 
 Read PR_REVIEW_REQUEST.md. It contains the PR description, changed files list, and the full diff in one place. You do not need to read pr.json, files.json, or diff.patch separately.
 
-Before writing any findings, produce a private catalogue of every change you can see. For each changed file, list:
-- Every function, prop, class, or variable whose signature or default value changed
-- Every deleted block and what replaced it (even if the replacement looks correct)
-- Every new behaviour added (new hooks, observers, guards, conditionals)
+As you read each file, write one line per suspicious item in this format:
+\`[file:line] — [what you saw] — [Category 1 / Category 2] — pending\`
+
+Category 1 = the finding is about whether a specific Carbon element accepts a specific attribute, prop, or variant — must verify with MCP.
+Category 2 = generic correctness, accessibility omission, or duplicate markup visible from the diff alone — no MCP needed.
+
+Examples of the format (not exhaustive — apply to any change you see):
+\`overflow-menu.figma.ts:33 — menu-alignment on <cds-overflow-menu>, body child element exists — Category 1 — pending\`
+\`combo-button.figma.ts:46 — Open:True variant identical to default — Category 2 — pending\`
+\`time-picker.figma.ts:31 — <cds-time-picker-select> children, no aria-label — Category 2 — pending\`
 
 Do not skip files. Do not stop cataloguing because the changes look safe. Complete the catalogue for ALL files first.
 
-Only review SOURCE CODE files listed under "Changed Files" in PR_REVIEW_REQUEST.md. Do NOT review bundle files.
+You may skip a file without a catalogue entry ONLY if it is a test fixture (__testfixtures__ path) or a test runner file (__tests__ path). For every skipped file write exactly:
+\`SKIP [filename] — [fixture|test]\`
 
-## Step 2 — Evaluate each catalogued change
+All other files require at least one catalogue entry or an explicit \`NO-FINDINGS [filename] — [one-sentence reason]\` line. Write these lines in your output, not in <thinking>.
 
-For each item in your catalogue, ask:
-1. Is the full change visible in the diff — is there a corresponding change elsewhere that makes this safe? (e.g. a removed JS default replaced by a CSS/SCSS default)
-2. Is this a correctness, accessibility, test, migration, or Carbon Design System issue?
-3. Apply the category test below before classifying.
+Only review SOURCE CODE files listed under "Changed Files" in PR_REVIEW_REQUEST.md. Do NOT review bundle files (e.g. files under dist/, es/, lib/, or ending in .min.js).
+
+Configuration and tooling source files (e.g. \`.figma.ts\`, \`.config.ts\`, storybook files) ARE source code — review them. A file being declarative or additive does not exempt it from review.
+
+**Figma Code Connect context:** Code Connect files are the source of truth for what code developers copy-paste from Figma. A wrong attribute name means every developer who uses that snippet ships broken code. A missing \`aria-label\` means every copied snippet is inaccessible. A duplicate variant means the Figma variant produces no distinct code output — the variant mapping is useless. These are not documentation nits — they are correctness and accessibility bugs with real downstream impact.
+
+For configuration and tooling files that reference Carbon APIs, look specifically for:
+1. **Attribute placement** — attributes set on the wrong element in a parent/child pair (placement or direction on a trigger instead of a body/panel element) — **Category 1** (requires MCP)
+2. **Duplicate variant examples** — a variant block that emits markup identical to the default with no public API difference (e.g. \`variant: { Open: 'True' }\`, \`variant: { Expanded: 'True' }\`) — **Category 2** (diff-visible, no MCP needed)
+3. **Missing accessibility attributes** — interactive child elements (selects, inputs, buttons inside a parent) that omit \`aria-label\` or similar attributes — **Category 2** (diff-visible, no MCP needed)
+
+For codemod and transform files (e.g. files under transforms/, codemods/), look specifically for:
+4. **Contradictory inline guidance** — a module-level comment that claims X and a TODO or inline comment in the same file that claims the opposite of X — **Category 2** (diff-visible, no MCP needed)
+5. **Prop names in migration guidance** — a TODO or comment directing users to use a specific prop name on a Carbon component — **Category 1** (verify the prop name exists via MCP)
+
+For any source file where the diff introduces a new normalising abstraction (a hook, a computed object, or a helper that replaces direct prop/attribute access — e.g. \`const normalizedProps = useNormalizedInputProps(...)\`, \`const computed = { disabled: ... }\`), look specifically for:
+6. **Partial migration** — the diff introduces the abstraction and updates some references, but other \`-\` or context lines in the same diff hunks still read the original raw value (e.g. a \`-\` line inside a changed hunk still checking \`!disabled\` directly instead of \`normalizedProps.disabled\`) — **Category 2** (diff-visible, no MCP needed). Only flag uses visible in the diff's \`+\`, \`-\`, or hunk context lines — do not infer or speculate about code outside the shown hunks.
+7. **Unsafe fallback in abstraction arguments** — the new abstraction is called with a fallback that can produce a non-unique value across instances (e.g. \`id ?? ''\` when the abstraction derives DOM IDs from that argument, risking duplicate IDs when the prop is omitted) — **Category 2** (diff-visible, no MCP needed).
+
+## Step 2 — Resolve every pending item
+
+For each \`pending\` item in your catalogue:
+- If Category 1: call carbon-mcp now, then update the item to \`confirmed finding\` or \`discarded: [reason]\`
+- If Category 2: decide from the diff alone, then update to \`confirmed finding\` or \`discarded: [reason]\`
+
+A \`pending\` item may never be silently dropped. If you move to Step 3 with any item still \`pending\`, go back.
 
 Do not raise a finding on a change until you have checked whether the rest of the diff compensates for it.
 
-## Step 3 — Output the JSON
+**Invalid discard reasons — these are not evidence, they are claims that belong in a review comment:**
+- "This is intentional" or "this is by design" — the PR author's intent is not visible in the diff
+- "This is a Figma visual state" — a variant that emits identical markup has no code effect regardless of Figma intent
+- "These are config files, not components" — config files that reference Carbon APIs are in scope
+- "The API looks standard" or "this appears correct" — appearance without an MCP call is not verification for Category 1 items
+
+**Valid discard reasons:**
+- Category 1: MCP returned direct evidence (from an example_clean, props_used, or chunk_text field) that the specific API usage on the specific component is correct — quote the evidence verbatim. Cross-component evidence alone (e.g. toast uses role="status", therefore inline is correct) is NOT a valid discard reason; it is evidence that belongs in mcpEvidence of a minor finding.
+- Category 2: The diff itself shows compensating code that makes the issue safe (cite the line)
+
+## Step 3 — Compile your findings list
+
+Before writing any JSON, list every \`confirmed finding\` from your catalogue with file path, line, title, severity, and whether MCP verification is complete. Nothing may appear in the JSON that is not in this list. If a confirmed finding still needs MCP evidence, go verify it now before proceeding.
+
+**Contextual layout token pattern — do not flag as breaking change:**
+When a JS/TS prop default is removed (e.g. \`size = 'md'\` → \`size\`) AND the same diff adds \`@include layout.use('size', $default: 'md', ...)\` in SCSS, the default has moved from the prop layer to the CSS layer — this is the Carbon contextual layout token migration pattern. The component still renders the same default visually. This is NOT a breaking change. Look for \`layout.use\` with a matching \`$default:\` value in the SCSS changes before flagging a removed JS prop default as breaking.
+
+## Step 4 — Output the JSON
 
 Your ONLY output is the JSON block between BEGIN_REVIEW_JSON and END_REVIEW_JSON markers below. Do not call attempt_completion, do not write prose. Writing the JSON block IS the completion step — do it even when findings is an empty array.
 
@@ -176,13 +222,29 @@ Category 2 — Non-Carbon finding: generic correctness, accessibility, test cove
 
 **Category test:** Ask "Could this finding appear on a non-Carbon component using the same framework?" If YES → Category 2. If NO → Category 1.
 
+Exception for config/tooling files: if the finding is about whether a specific **attribute name** exists on a specific Carbon element (e.g. is \`direction\` a valid attribute on \`<cds-overflow-menu>\`?), it is always Category 1 regardless of whether a similar pattern could appear elsewhere — the correctness of the name depends entirely on Carbon's API.
+
+This exception does NOT apply to structural or output questions. A finding about two variant blocks emitting identical markup is always Category 2 — you can answer it by reading the diff, regardless of which file it appears in. Do not call MCP to ask whether an \`open\` prop exists in order to justify a duplicate-variant finding.
+
 **Framework behaviour is always Category 2** regardless of which file it appears in: Lit lifecycle (@query, firstUpdated, updateComplete), React hooks, TypeScript types, event listeners, async patterns.
 
-**Do not call MCP tools speculatively.** Only call carbon-mcp tools after you have identified a specific finding AND it has passed the category test as Category 1. Do not search MCP to understand what a piece of code does — only to verify a claim you are about to make about a Carbon component's consumer-facing API.
+**Do not call MCP tools speculatively on general source code.** Exception: for any file that references Carbon component APIs (e.g. \`.figma.ts\`, \`.stories.ts\`), verifying that an **attribute name** exists on the correct element is always a valid MCP call — do not wait for a "specific finding" before checking attribute placement in these files. This exception covers attribute-name and placement questions only — it does not cover duplicate-variant or missing-aria-label findings, which are always Category 2.
 
 **Follow requery_hint before trying docs_search.** When a code_search result shows "example_omitted": true for a variant that is relevant to your finding, follow its requery_hint with size: 1 before falling back to docs_search. The requery_hint fetches the full variant example and is the most precise evidence source for prop requirements.
 
-**mcpEvidence rule:** Must be a direct quote from the tool response. Vague phrases like "Verified via code_search" or empty strings will cause the finding to be dropped by the parser.
+**Stop after two MCP calls for the same prop.** If two consecutive MCP calls searching for the same prop name return no evidence of it in any example_clean, props_used, or props_catalog field, do not follow additional requery_hints for that prop. Move on — treat as "MCP returned no evidence."
+
+**props_catalog is not exhaustive.** It only reflects props used in indexed storybook stories — not the full component API. Absence of a prop from props_catalog is NOT sufficient evidence to file a finding. Before concluding a prop does not exist:
+- Check whether any MCP result (any framework, any variant) shows the prop in an example_clean or props_used field — cross-framework confirmation (e.g. Web Components showing \`hide-steppers\` when reviewing a React prop \`hideSteppers\`) is positive evidence the prop concept exists in Carbon
+- Follow requery_hint on at most one relevant variant to get its full example
+- Only file a finding about a missing prop if MCP positively shows it was removed, deprecated, or is absent from the TypeScript interface — not merely absent from props_catalog
+
+**mcpEvidence rule:** Must be a direct quote or verbatim field value from a tool response. Acceptable forms:
+- A direct quote from a docs_search chunk_text field
+- A verbatim example_clean or props_used value from code_search (e.g. "cds-toast-notification default variant shows role=\\"status\\" in example_clean")
+- A cross-component observation stated explicitly, e.g. "cds-toast-notification default storybook example uses role=\\"status\\""
+
+Vague summaries like "Verified via code_search" or empty strings will cause the finding to be dropped by the parser. If the only available evidence is a cross-component inference, state it explicitly in that form — do NOT synthesize or paraphrase a quote that was not present in the tool response.
 
 **summaryMarkdown** must contain only:
 1. One or two sentences describing what the PR does
