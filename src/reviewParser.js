@@ -314,6 +314,21 @@ function parseReviewOutput(agentOutput) {
   try {
     // Find JSON markers
     const jsonStart = agentOutput.indexOf('BEGIN_REVIEW_JSON');
+
+    // Detect whether the agent wrote a visible catalogue before the JSON.
+    // A legitimate run will have at least one SKIP, NO-FINDINGS, or catalogue
+    // entry line before BEGIN_REVIEW_JSON. If none are present the agent likely
+    // skipped its Step 1 work entirely — flag this so callers can warn.
+    //
+    // Formats handled (all observed in real agent output):
+    //   - bare:          NO-FINDINGS file.ts — reason
+    //   - bullet-prefix: - NO-FINDINGS file.ts — reason
+    //   - bracket-style: [file.ts:33] — description — Category N — pending
+    //   - backtick-wrap: `file.ts:66-75 — description — Category N — pending`
+    //   - backtick file: `file.ts — description — Category N — pending`
+    //   - SKIP:          SKIP file.ts — fixture
+    const preJson = jsonStart !== -1 ? agentOutput.slice(0, jsonStart) : agentOutput;
+    const hasCatalogue = /^`?(-\s+)?(SKIP |NO-FINDINGS |\[.+?\]\s*—|\S+\.\S*\s*—)/m.test(preJson);
     
     if (jsonStart === -1) {
       // Check if Bob called attempt_completion with a prose summary instead of
@@ -328,7 +343,13 @@ function parseReviewOutput(agentOutput) {
           summaryMarkdown: prose,
           findings: [],
           shouldPostInlineComments: false,
-          verificationStats: { total: 0, carbonSpecific: 0, carbonVerified: 0, filtered: 0 }
+          verificationStats: { total: 0, carbonSpecific: 0, carbonVerified: 0, filtered: 0 },
+          // New fields — safe defaults so callers never dereference undefined
+          hasCatalogue: false,
+          recommendation: 'looks-good',
+          recommendationRationale: 'Agent produced no structured findings.',
+          catalogueWarning: 'Agent used attempt_completion — no structured catalogue was produced.',
+          findingsTable: []
         };
       }
 
@@ -411,7 +432,36 @@ function parseReviewOutput(agentOutput) {
     
     // Store verification stats for reporting
     review.verificationStats = filterResult.stats;
-    
+
+    // Record whether a visible catalogue was present — callers use this to
+    // warn when the agent skipped its Step 1 work.
+    review.hasCatalogue = hasCatalogue;
+
+    // ─── computeRecommendation MUST be called last, after both
+    // filterUnverifiedCarbonFindings and hasCatalogue are set. ─────────────
+    const { recommendation, recommendationRationale } = computeRecommendation(
+      review.findings,
+      { hasCatalogue, verificationStats: review.verificationStats }
+    );
+    review.recommendation = recommendation;
+    review.recommendationRationale = recommendationRationale;
+
+    // Catalogue warning — moved out of summaryMarkdown so callers never mutate
+    // that field. formatSummaryComment renders this in its own block.
+    review.catalogueWarning = hasCatalogue
+      ? null
+      : 'No file catalogue was found in this review\'s output. The agent may have skipped Step 1 analysis. Zero findings here cannot be confirmed as a clean review — re-running is recommended.';
+
+    // Build findingsTable — typed array of objects, never Markdown strings.
+    // formatSummaryComment renders this as a Markdown table; agent never touches pipes.
+    review.findingsTable = review.findings.map(f => ({
+      area: f.verificationSource === 'carbon-mcp' ? 'Carbon API' : 'General',
+      category: f.verificationSource === 'carbon-mcp' ? 'Cat 1' : 'Cat 2',
+      severity: f.severity,
+      title: f.title,
+      file: f.file
+    }));
+
     return review;
     
   } catch (error) {
@@ -447,8 +497,93 @@ function parseReviewOutput(agentOutput) {
 }
 
 /**
+ * Compute a PR-level recommendation from post-filter findings.
+ *
+ * Priority ladder (first matching rule wins):
+ *   1. hasCatalogue === false              → suggested-improvements (review unreliable)
+ *   2. MCP partial unavailability          → suggested-improvements (incomplete review)
+ *   3. ≥1 blocking finding                 → consider-revising
+ *   4. ≥2 major findings                   → consider-revising
+ *   5. ≥1 major OR ≥1 minor finding        → suggested-improvements
+ *   6. else (nits only or empty)           → looks-good
+ *
+ * MUST be called after filterUnverifiedCarbonFindings and hasCatalogue are set.
+ *
+ * @param {Array}  findings         - Post-filter findings array
+ * @param {Object} opts
+ * @param {boolean} opts.hasCatalogue      - Whether Step 1 catalogue was present
+ * @param {Object}  opts.verificationStats - { carbonSpecific, carbonVerified, ... }
+ * @returns {{ recommendation: string, recommendationRationale: string }}
+ */
+function computeRecommendation(findings, { hasCatalogue, verificationStats = {} }) {
+  const counts = countBySeverity(findings);
+
+  // Rule 1 — no catalogue: review reliability is unknown
+  if (!hasCatalogue) {
+    return {
+      recommendation: 'suggested-improvements',
+      recommendationRationale:
+        'Review reliability is uncertain — no Step 1 file catalogue was detected in the agent output.'
+    };
+  }
+
+  // Rule 2 — MCP partially unavailable: Cat 1 findings may be missing
+  const mcpPartiallyUnavailable =
+    (verificationStats.carbonSpecific || 0) > 0 &&
+    (verificationStats.carbonVerified || 0) === 0;
+  if (mcpPartiallyUnavailable) {
+    return {
+      recommendation: 'suggested-improvements',
+      recommendationRationale:
+        'Carbon-specific findings may be incomplete — Carbon MCP returned no verified results during this run.'
+    };
+  }
+
+  // Rule 3 — any blocking finding
+  if (counts.blocking >= 1) {
+    const ex = findings.find(f => f.severity === 'blocking');
+    return {
+      recommendation: 'consider-revising',
+      recommendationRationale:
+        `${counts.blocking} blocking finding${counts.blocking > 1 ? 's' : ''}: "${ex ? ex.title : 'see findings below'}"`
+    };
+  }
+
+  // Rule 4 — two or more major findings
+  if (counts.major >= 2) {
+    return {
+      recommendation: 'consider-revising',
+      recommendationRationale:
+        `${counts.major} major findings that should be addressed before merge.`
+    };
+  }
+
+  // Rule 5 — any major or any minor finding
+  if (counts.major >= 1 || counts.minor >= 1) {
+    const total = counts.major + counts.minor;
+    const parts = [];
+    if (counts.major) parts.push(`${counts.major} major`);
+    if (counts.minor) parts.push(`${counts.minor} minor`);
+    return {
+      recommendation: 'suggested-improvements',
+      recommendationRationale:
+        `${total} finding${total > 1 ? 's' : ''} worth considering: ${parts.join(', ')}.`
+    };
+  }
+
+  // Rule 6 — nits only or no findings
+  const nitNote = counts.nit > 0
+    ? `${counts.nit} optional nit${counts.nit > 1 ? 's' : ''} noted.`
+    : 'No issues found.';
+  return {
+    recommendation: 'looks-good',
+    recommendationRationale: nitNote
+  };
+}
+
+/**
  * Count findings by severity
- * 
+ *
  * @param {Array} findings - Array of finding objects
  * @returns {Object} - Count by severity level
  */
@@ -474,7 +609,8 @@ module.exports = {
   parseReviewOutput,
   filterUnverifiedCarbonFindings,
   looksCarbonSpecific,
-  countBySeverity
+  countBySeverity,
+  computeRecommendation
 };
 
 // Made with Bob

@@ -191,6 +191,15 @@ async function reviewPRs() {
         }
         
         console.log(`✅ Parsed: ${review.findings.length} findings`);
+        console.log(`✅ Recommendation: ${review.recommendation} — ${review.recommendationRationale}`);
+
+        // Warn when the agent skipped its catalogue step. The warning text is
+        // now in review.catalogueWarning (set by the parser) and rendered by
+        // formatSummaryComment — summaryMarkdown is never mutated here.
+        if (!review.hasCatalogue) {
+          console.warn('⚠️  No visible catalogue in agent output — agent may have skipped Step 1');
+          console.warn('   Zero findings from this run should be treated as unreliable');
+        }
         
         // Split findings into inline-able and summary-only
         console.log('\n🔍 Mapping findings to diff positions...');
@@ -263,7 +272,11 @@ async function reviewPRs() {
             commitSha: pr.head.sha,
             inlineFindings,
             summaryFindings,
-            tokenUsage
+            tokenUsage,
+            recommendation: review.recommendation,
+            recommendationRationale: review.recommendationRationale,
+            catalogueWarning: review.catalogueWarning,
+            findingsTable: review.findingsTable
           });
           
           await client.postSummaryComment({

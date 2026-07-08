@@ -15,14 +15,14 @@ function estimateTokenUsage({ prompt, diff, agentOutput }) {
   // Rough estimation: 1 token ≈ 4 characters for English text
   // This is a conservative estimate; actual tokenization varies by model
   const CHARS_PER_TOKEN = 4;
-  
+
   const inputChars = (prompt?.length || 0) + (diff?.length || 0);
   const outputChars = agentOutput?.length || 0;
-  
+
   const inputTokens = Math.ceil(inputChars / CHARS_PER_TOKEN);
   const outputTokens = Math.ceil(outputChars / CHARS_PER_TOKEN);
   const totalTokens = inputTokens + outputTokens;
-  
+
   return {
     input: inputTokens,
     output: outputTokens,
@@ -30,64 +30,168 @@ function estimateTokenUsage({ prompt, diff, agentOutput }) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Recommendation labels and submitter-facing advice copy
+// ---------------------------------------------------------------------------
+
+const RECOMMENDATION_LABELS = {
+  'consider-revising': 'Consider Revising',
+  'suggested-improvements': 'Suggested Improvements',
+  'looks-good': 'Looks Good'
+};
+
+const RECOMMENDATION_ADVICE = {
+  'consider-revising':
+    'There are issues in this PR that should be addressed before merging. ' +
+    'Please review the findings below — the blocking and major items include specific suggestions on what to change.',
+  'suggested-improvements':
+    'This PR is on the right track. The findings below are suggestions worth considering before or shortly after merging — ' +
+    'none are hard blockers, but addressing them would improve correctness or maintainability.',
+  'looks-good':
+    'No blocking or major issues were found. Any nit-level notes below are entirely optional and provided for completeness.'
+};
+
+const SEVERITY_GUIDANCE = {
+  blocking: 'Should be resolved before this ships.',
+  major: 'Worth addressing before merge.',
+  minor: 'Consider addressing — not a hard blocker.',
+  nit: 'Optional — provided for completeness.'
+};
+
+// ---------------------------------------------------------------------------
+// formatInlineComment
+// ---------------------------------------------------------------------------
+
 /**
- * Format summary comment with spec-compliant template
+ * Format inline review comment for a specific finding
  *
- * @param {Object} options - Formatting options
- * @param {string} options.agent - Agent name (bob, claude, codex)
- * @param {string} options.summaryMarkdown - Agent's summary markdown
- * @param {number} options.prNumber - PR number
- * @param {string} options.commitSha - Head commit SHA
- * @param {Array} [options.inlineFindings] - Findings posted as inline comments
- * @param {Array} [options.summaryFindings] - Findings included in summary
- * @param {Object} [options.tokenUsage] - Token usage estimate { input, output, total }
+ * @param {Object} finding - Finding object
+ * @returns {string} - Formatted inline comment
+ */
+function formatInlineComment(finding) {
+  const guidance = SEVERITY_GUIDANCE[finding.severity] || '';
+  let comment = `**${finding.title}**\n\n`;
+  comment += `> **[${finding.severity}]** ${guidance}\n\n`;
+  comment += finding.body + '\n\n';
+
+  // Only show verification badge for Carbon-specific findings
+  if (finding.carbonVerified && finding.verificationSource === 'carbon-mcp') {
+    comment += `*✓ Verified with Carbon MCP*\n`;
+  }
+
+  return comment;
+}
+
+// ---------------------------------------------------------------------------
+// formatSummaryComment
+// ---------------------------------------------------------------------------
+
+/**
+ * Format summary comment with spec-compliant template.
+ *
+ * All new parameters have safe defaults so existing call sites continue to
+ * work without modification — no silent undefined in rendered output.
+ *
+ * @param {Object}  options
+ * @param {string}  options.agent                - Agent name (bob, claude, codex)
+ * @param {string}  options.summaryMarkdown       - Agent's 1-2 sentence summary (never mutated)
+ * @param {number}  options.prNumber              - PR number
+ * @param {string}  options.commitSha             - Head commit SHA
+ * @param {Array}   [options.inlineFindings]      - Findings posted as inline comments
+ * @param {Array}   [options.summaryFindings]     - Findings included in summary
+ * @param {Object}  [options.tokenUsage]          - Token usage { input, output, total }
+ * @param {string}  [options.recommendation]      - 'consider-revising'|'suggested-improvements'|'looks-good'
+ * @param {string}  [options.recommendationRationale] - One sentence from computeRecommendation
+ * @param {string|null} [options.catalogueWarning] - Non-null when agent skipped Step 1 catalogue
+ * @param {Array}   [options.findingsTable]       - Typed array from parser: [{area,category,severity,title,file}]
  * @returns {string} - Formatted summary comment
  */
-function formatSummaryComment({ agent, summaryMarkdown, prNumber, commitSha, inlineFindings = [], summaryFindings = [], tokenUsage = null }) {
-  let comment = `[AI agent review — Carbon grounded]\n\n`;
-  comment += `Reviewed by: ${agent}\n`;
-  comment += `Carbon verification policy: Carbon-specific claims require Carbon MCP verification.\n\n`;
-  
-  // Add agent's summary
+function formatSummaryComment({
+  agent,
+  summaryMarkdown,
+  prNumber,
+  commitSha,
+  inlineFindings = [],
+  summaryFindings = [],
+  tokenUsage = null,
+  recommendation = 'looks-good',
+  recommendationRationale = '',
+  catalogueWarning = null,
+  findingsTable = []
+}) {
+  const recLabel = RECOMMENDATION_LABELS[recommendation] || recommendation;
+  const recAdvice = RECOMMENDATION_ADVICE[recommendation] || '';
+
+  let comment = `[AI agent review — Carbon grounded] · **${recLabel}**\n\n`;
+  comment += `Reviewed by: ${agent} · Commit: ${commitSha.substring(0, 7)}\n`;
+  comment += `Carbon verification: Carbon-specific claims verified via Carbon MCP.\n\n`;
+
+  // ── Recommendation section ─────────────────────────────────────────────
+  comment += `## Recommendation\n\n`;
+  if (recommendationRationale) {
+    comment += `${recommendationRationale}\n\n`;
+  }
+  comment += `${recAdvice}\n\n`;
+
+  // ── Catalogue reliability warning (rendered separately — never in summaryMarkdown) ──
+  if (catalogueWarning) {
+    comment += `> ⚠️ **Review Reliability Note:** ${catalogueWarning}\n\n`;
+  }
+
+  // ── Findings table (rendered from typed array — no Markdown in agent JSON) ──
+  if (findingsTable && findingsTable.length > 0) {
+    comment += `## Findings\n\n`;
+    comment += `| Area | Category | Severity | Finding | File |\n`;
+    comment += `|------|----------|----------|---------|------|\n`;
+    for (const row of findingsTable) {
+      // Sanitise cell values: strip pipes and newlines to prevent table breakage
+      const safe = v => String(v || '').replace(/[|\n\r]/g, ' ').trim();
+      comment += `| ${safe(row.area)} | ${safe(row.category)} | ${safe(row.severity)} | ${safe(row.title)} | ${safe(row.file)} |\n`;
+    }
+    comment += '\n';
+  }
+
+  // ── Agent summary (verbatim — this field is never mutated after parse) ──
+  comment += `## Summary\n\n`;
   comment += summaryMarkdown + '\n\n';
-  
-  // Add findings that couldn't be posted inline
+
+  // ── Additional findings that couldn't be posted inline ─────────────────
   if (summaryFindings && summaryFindings.length > 0) {
     comment += `## Additional Findings\n\n`;
     comment += `The following findings could not be mapped to specific lines in the diff:\n\n`;
-    
+
     summaryFindings.forEach((finding, index) => {
+      const guidance = SEVERITY_GUIDANCE[finding.severity] || '';
       comment += `### ${index + 1}. ${finding.title}\n\n`;
       comment += `**File:** \`${finding.file}\``;
       if (finding.line) {
         comment += ` (Line ${finding.line})`;
       }
-      comment += `\n**Severity:** ${finding.severity}\n\n`;
+      comment += `\n**Severity:** ${finding.severity} — ${guidance}\n\n`;
       comment += finding.body + '\n\n';
-      
-      // Only show verification badge for Carbon-specific findings
+
       if (finding.carbonVerified && finding.verificationSource === 'carbon-mcp') {
         comment += `*✓ Verified with Carbon MCP*\n\n`;
       }
-      
+
       comment += '---\n\n';
     });
   }
-  
-  // Add review artifacts
+
+  // ── Review artifacts ────────────────────────────────────────────────────
   comment += `Review artifacts:\n`;
   comment += `- PR: #${prNumber}\n`;
   comment += `- Commit: ${commitSha.substring(0, 7)}\n`;
   comment += `- Agent: ${agent}\n`;
-  
+
   if (inlineFindings && inlineFindings.length > 0) {
     comment += `- Inline comments: ${inlineFindings.length}\n`;
   }
   if (summaryFindings && summaryFindings.length > 0) {
     comment += `- Summary findings: ${summaryFindings.length}\n`;
   }
-  
-  // Add token usage estimate if available
+
+  // ── Token usage ─────────────────────────────────────────────────────────
   if (tokenUsage) {
     comment += `\n---\n\n`;
     comment += `**Estimated Token Usage:**\n`;
@@ -96,35 +200,20 @@ function formatSummaryComment({ agent, summaryMarkdown, prNumber, commitSha, inl
     comment += `- Total tokens: ~${tokenUsage.total.toLocaleString()}\n`;
     comment += `\n*Note: Token estimates are approximate and based on character count (1 token ≈ 4 characters).*\n`;
   }
-  
+
   return comment;
 }
 
-/**
- * Format inline review comment for a specific finding
- * 
- * @param {Object} finding - Finding object
- * @returns {string} - Formatted inline comment
- */
-function formatInlineComment(finding) {
-  let comment = `**${finding.title}**\n\n`;
-  comment += `Severity: ${finding.severity}\n\n`;
-  comment += finding.body + '\n\n';
-  
-  // Only show verification badge for Carbon-specific findings
-  if (finding.carbonVerified && finding.verificationSource === 'carbon-mcp') {
-    comment += `*✓ Verified with Carbon MCP*\n`;
-  }
-  
-  return comment;
-}
+// ---------------------------------------------------------------------------
+// buildReviewPrompt
+// ---------------------------------------------------------------------------
 
 /**
  * Build the prompt for the AI agent
- * 
+ *
  * @param {Object} options - Prompt options
  * @param {string} options.owner - Repository owner
- * @param {string} options.repo - Repository name
+ * @param {string} options.repo  - Repository name
  * @returns {string} - Formatted prompt
  */
 function buildReviewPrompt({ owner, repo }) {
@@ -171,6 +260,23 @@ For any source file where the diff introduces a new normalising abstraction (a h
 6. **Partial migration** — the diff introduces the abstraction and updates some references, but other \`-\` or context lines in the same diff hunks still read the original raw value (e.g. a \`-\` line inside a changed hunk still checking \`!disabled\` directly instead of \`normalizedProps.disabled\`) — **Category 2** (diff-visible, no MCP needed). Only flag uses visible in the diff's \`+\`, \`-\`, or hunk context lines — do not infer or speculate about code outside the shown hunks.
 7. **Unsafe fallback in abstraction arguments** — the new abstraction is called with a fallback that can produce a non-unique value across instances (e.g. \`id ?? ''\` when the abstraction derives DOM IDs from that argument, risking duplicate IDs when the prop is omitted) — **Category 2** (diff-visible, no MCP needed).
 
+In addition, for EVERY changed source file apply these rubric checks during the same per-file pass (do not loop files a second time):
+
+8. **Generic accessibility omissions** — interactive elements (button, select, input, a with no text, img) that are new or modified in the diff and lack aria-label, aria-describedby, alt, or required role — **Category 2** (diff-visible, no MCP needed)
+9. **TypeScript / framework correctness** — the principle is: does the diff introduce a type annotation or framework call whose guarantee is immediately contradicted by how it is used? Flag it. The following are examples, not an exhaustive list — apply the principle to any pattern you see:
+   - \`!\` non-null assertion on a field that is immediately accessed with \`?.\` optional chaining (or vice versa) — the two are contradictory: either the value can be null/undefined (\`?.\` is correct, \`!\` is a lie to the compiler) or it cannot (\`!\` is correct, \`?.\` is unnecessary noise that masks a real invariant violation)
+   - \`@query\` decorator used on a field typed as \`HTMLElement\` but the selector can match zero elements at runtime (e.g. a named slot or conditional child)
+   - \`firstUpdated\` override that does not call \`super.firstUpdated()\`
+   - \`updateComplete\` awaited without \`await\` (i.e. the promise is dropped)
+   - React hook called inside a condition, loop, or nested function
+   - \`async\` function whose returned promise is never awaited or \`.catch\`-ed at the call site
+   - This check is always **Category 2** regardless of file type — framework behaviour is never Carbon-specific
+10. **Unsafe ID / key fallback** — any new abstraction argument or JSX key prop that can produce an empty string or non-unique value across instances (e.g. \`id ?? ''\`, \`key={index}\` on reorderable lists) — **Category 2** (diff-visible, no MCP needed)
+11. **Breaking API change without deprecation** — a public export, required prop, or event name removed or renamed in the diff with no deprecation notice or migration comment — **Category 1** (verify the prior API contract via MCP before filing)
+12. **Icon name or size verification** — an icon name or size variant introduced or changed in the diff (e.g. \`Add16\`, \`<AddIcon size={20} />\`) — **Category 1** (verify the icon and size exist via MCP code_search with asset_type: "icon")
+13. **Test coverage gap** — For every changed source file, determine: does this diff introduce a new exported function, new public method, or clearly new runtime behaviour? If yes, check whether the "Changed Files" list contains a corresponding \`__tests__\`, \`.test.\`, or \`.spec.\` file for the changed source. If no test file is present AND new behaviour was introduced, this is a catalogue item. You may discard it only if you can quote a specific diff line showing the new code is covered by an existing inline test or the change is a pure refactoring with no new code paths. **Do not state that test files exist in the changed files list unless you have verified this by reading the "Changed Files" section of PR_REVIEW_REQUEST.md.** — **Category 2**
+14. **Changelog / API hygiene** — a public API surface changes (component added, prop added/removed, event renamed) with no entry in a changelog or breaking-changes file. **Scope: apply this check only when NO \`CHANGELOG\`, \`CHANGELOG.md\`, \`BREAKING_CHANGES\`, or \`BREAKING_CHANGES.md\` file appears in the "Changed Files" list.** — **Category 2**
+
 ## Step 2 — Resolve every pending item
 
 For each \`pending\` item in your catalogue:
@@ -185,11 +291,13 @@ Do not raise a finding on a change until you have checked whether the rest of th
 - "This is intentional" or "this is by design" — the PR author's intent is not visible in the diff
 - "This is a Figma visual state" — a variant that emits identical markup has no code effect regardless of Figma intent
 - "These are config files, not components" — config files that reference Carbon APIs are in scope
-- "The API looks standard" or "this appears correct" — appearance without an MCP call is not verification for Category 1 items
+- "The API looks standard" or "this appears correct" — appearance without evidence is not a valid discard reason for ANY category
+- A successful MCP call about a different question (e.g. confirming an attribute exists) does NOT discharge a pending item about a different concern (e.g. a falsy check, a missing guard, a logic equivalence question) — each pending item must be resolved on its own merits
+- **Stating a factual condition that is not true** — e.g. claiming test files exist in the changed files list when they do not, or claiming the diff does not introduce new behaviour when it does. A discard reason that misstates what the diff or the changed files list contains is invalid. If you are unsure whether a file exists in the changed list, re-read the "Changed Files" section of PR_REVIEW_REQUEST.md before discarding.
 
 **Valid discard reasons:**
 - Category 1: MCP returned direct evidence (from an example_clean, props_used, or chunk_text field) that the specific API usage on the specific component is correct — quote the evidence verbatim. Cross-component evidence alone (e.g. toast uses role="status", therefore inline is correct) is NOT a valid discard reason; it is evidence that belongs in mcpEvidence of a minor finding.
-- Category 2: The diff itself shows compensating code that makes the issue safe (cite the line)
+- Category 2: Quote the specific diff line (file:line) that makes the concern safe, and explain in one sentence why that line resolves it. A general conclusion ("implementation is correct", "this is handled") without a cited line is not a valid discard reason.
 
 ## Step 3 — Compile your findings list
 
@@ -249,29 +357,39 @@ Vague summaries like "Verified via code_search" or empty strings will cause the 
 **summaryMarkdown** must contain only:
 1. One or two sentences describing what the PR does
 2. A single line stating the count and severity of findings
+3. (Optional) One sentence noting Carbon MCP unavailability — include this ONLY if Carbon-specific findings were omitted because MCP was unavailable
 
-Must NOT contain checkmark lists, MCP verification claims, broad alignment statements, headings, or emoji.
+Must NOT contain checkmark lists, MCP verification claims, broad alignment statements, headings, recommendations, or emoji. The recommendation is computed by the system — do not include it here.
 
 Correct: "This PR suppresses invalid/warn states on TextArea when disabled or readonly. 1 minor finding: readonly/disabled precedence behaviour may need a clarifying comment."
 Incorrect: "✅ TextArea API confirmed via code_search. ✅ Implementation aligns with Carbon guidelines."
 
-Only mention Carbon MCP availability if Carbon findings were omitted because MCP was unavailable.
+**findingsTable** must be populated with one entry per confirmed finding — the same findings that appear in the \`findings\` array. Each entry is a plain object with five string fields. Do NOT include rows for clean areas. Do NOT use pipe characters, newlines, or backslashes in any field value — these are plain text labels only.
 
 Return exactly this JSON between markers — this is mandatory, do not end your response without it:
 
 BEGIN_REVIEW_JSON
 {
-  "summaryMarkdown": "string",
+  "summaryMarkdown": "string — 1 to 3 sentences max, no headings, no emoji, no recommendations",
   "findings": [
     {
       "severity": "blocking|major|minor|nit",
       "file": "repo-relative path",
       "line": 123,
-      "title": "short title",
+      "title": "short title — plain text, no pipes or newlines",
       "body": "specific actionable comment",
       "carbonVerified": true,
       "verificationSource": "carbon-mcp|not-carbon-specific",
       "mcpEvidence": "direct quote from MCP tool response (required when verificationSource is carbon-mcp, omit otherwise)"
+    }
+  ],
+  "findingsTable": [
+    {
+      "area": "Carbon API|General",
+      "category": "Cat 1|Cat 2",
+      "severity": "blocking|major|minor|nit",
+      "title": "short title — plain text only, no pipes or newlines",
+      "file": "repo-relative path — plain text only, no pipes"
     }
   ],
   "shouldPostInlineComments": true
@@ -281,6 +399,13 @@ END_REVIEW_JSON
 verificationSource values:
 - "carbon-mcp": verified via Carbon MCP — mcpEvidence MUST be a direct quote from the tool response
 - "not-carbon-specific": generic correctness, accessibility, test, or migration finding
+
+findingsTable rules:
+- One entry per confirmed finding (mirrors the findings array)
+- area: "Carbon API" for carbon-mcp findings, "General" for not-carbon-specific findings
+- category: "Cat 1" for carbon-mcp findings, "Cat 2" for not-carbon-specific findings
+- No Markdown formatting, no pipe characters, no newline characters in any field value
+- Empty array when there are no confirmed findings
 `;
 }
 
