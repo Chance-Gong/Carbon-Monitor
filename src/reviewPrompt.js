@@ -124,7 +124,7 @@ function formatSummaryComment({
 
   let comment = `[AI agent review — Carbon grounded] · **${recLabel}**\n\n`;
   comment += `Reviewed by: ${agent} · Commit: ${commitSha.substring(0, 7)}\n`;
-  comment += `Carbon verification: Carbon-specific claims verified via Carbon MCP.\n\n`;
+  comment += `Carbon verification: Carbon Builder Skill connected · Carbon MCP connected.\n\n`;
 
   // ── Recommendation section ─────────────────────────────────────────────
   comment += `## Recommendation\n\n`;
@@ -282,7 +282,7 @@ In addition, for EVERY changed source file apply these rubric checks during the 
 ## Step 2 — Resolve every pending item
 
 For each \`pending\` item in your catalogue:
-- If Category 1: call carbon-mcp now, then update the item to \`confirmed finding\` or \`discarded: [reason]\`
+- If Category 1: call carbon-builder skill first (use_skill: carbon-builder); if the skill returns no recommendations or no relevant information, then call carbon-mcp. Update the item to \`confirmed finding\` or \`discarded: [reason]\`
 - If Category 2: decide from the diff alone, then update to \`confirmed finding\` or \`discarded: [reason]\`
 
 A \`pending\` item may never be silently dropped. If you move to Step 3 with any item still \`pending\`, go back.
