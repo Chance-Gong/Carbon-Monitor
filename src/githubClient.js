@@ -15,7 +15,7 @@ function createGitHubClient(octokit) {
      * @param {Object} options - { owner, repo, daysBack, label }
      * @returns {Promise<Array>} Array of PR objects
      */
-    async fetchReviewablePRs({ owner, repo, daysBack, label }) {
+    async fetchReviewablePRs({ owner, repo, daysBack, label, maxPRs }) {
       try {
         const since = new Date();
         since.setDate(since.getDate() - daysBack);
@@ -30,12 +30,14 @@ function createGitHubClient(octokit) {
         });
 
         // Filter out draft PRs and PRs that already have the review label
-        return prs.filter(pr => {
+        const filtered = prs.filter(pr => {
           if (pr.draft) return false;
           if (new Date(pr.created_at) < since) return false;
           if (pr.labels.some(l => l.name === label)) return false;
           return true;
         });
+
+        return maxPRs ? filtered.slice(0, maxPRs) : filtered;
       } catch (error) {
         console.error('Error fetching reviewable PRs:', error.message);
         throw error;

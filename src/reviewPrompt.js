@@ -219,6 +219,11 @@ function formatSummaryComment({
 function buildReviewPrompt({ owner, repo }) {
   return `You are an agentic PR reviewer for ${owner}/${repo}.
 
+**OUTPUT CONTRACT — read before starting:**
+1. Write catalogue lines to your visible response (not inside <thinking>) — the parser checks for them.
+2. Do not call attempt_completion at any point — writing the JSON block between BEGIN_REVIEW_JSON and END_REVIEW_JSON markers IS the completion step.
+3. Do not end your response without the JSON block, even when findings is an empty array.
+
 ## Step 1 — Read and catalogue the diff (do this before forming any opinion)
 
 Read PR_REVIEW_REQUEST.md. It contains the PR description, changed files list, and the full diff in one place. You do not need to read pr.json, files.json, or diff.patch separately.
@@ -239,11 +244,13 @@ Do not skip files. Do not stop cataloguing because the changes look safe. Comple
 You may skip a file without a catalogue entry ONLY if it is a test fixture (__testfixtures__ path) or a test runner file (__tests__ path). For every skipped file write exactly:
 \`SKIP [filename] — [fixture|test]\`
 
-All other files require at least one catalogue entry or an explicit \`NO-FINDINGS [filename] — [one-sentence reason]\` line. Write these lines in your output, not in <thinking>.
+All other files require at least one catalogue entry or an explicit \`NO-FINDINGS [filename] — [one-sentence reason]\` line.
+
+**Write every catalogue and NO-FINDINGS line in your visible response — not inside <thinking>.** The downstream parser inspects the text before BEGIN_REVIEW_JSON for these exact formats. A run where none appear will be marked unreliable and flagged to the reviewer regardless of what the findings array contains.
 
 Only review SOURCE CODE files listed under "Changed Files" in PR_REVIEW_REQUEST.md. Do NOT review bundle files (e.g. files under dist/, es/, lib/, or ending in .min.js).
 
-Configuration and tooling source files (e.g. \`.figma.ts\`, \`.config.ts\`, storybook files) ARE source code — review them. A file being declarative or additive does not exempt it from review.
+Configuration and tooling source files (e.g. \`.figma.ts\`, \`.config.ts\`, storybook files) and style files (\`.scss\`, \`.css\`, \`.less\`) ARE source code — review them. A file being declarative or additive does not exempt it from review.
 
 **Figma Code Connect context:** Code Connect files are the source of truth for what code developers copy-paste from Figma. A wrong attribute name means every developer who uses that snippet ships broken code. A missing \`aria-label\` means every copied snippet is inaccessible. A duplicate variant means the Figma variant produces no distinct code output — the variant mapping is useless. These are not documentation nits — they are correctness and accessibility bugs with real downstream impact.
 
@@ -270,14 +277,23 @@ In addition, for EVERY changed source file apply these rubric checks during the 
    - \`updateComplete\` awaited without \`await\` (i.e. the promise is dropped)
    - React hook called inside a condition, loop, or nested function
    - \`async\` function whose returned promise is never awaited or \`.catch\`-ed at the call site
-   - A new or modified \`keydown\`/\`keyup\`/\`keypress\` handler that reacts to a specific key (e.g. \`event.key === 'Escape'\`) **without checking \`event.defaultPrevented\`**, when all three of the following are visible in the diff: (1) the handler is on a component whose render output or shadow-DOM template passes \`children\` or includes a \`<slot>\` element — meaning the caller supplies the nested content; (2) the handler fires on that specific key; (3) the handler body contains no reference to \`event.defaultPrevented\`. A child component inside the slot/children can handle the same key for its own dismiss behaviour and call \`event.preventDefault()\`, but without this guard the event still bubbles and closes the outer component too. **Do not flag** handlers on leaf elements (button, input, select, textarea) whose children are fixed by their own template, and do not flag handlers that already reference \`event.defaultPrevented\`.
+   - A new or modified \`keydown\`/\`keyup\`/\`keypress\` handler that reacts to a specific key (e.g. \`event.key === 'Escape'\`) **without checking \`event.defaultPrevented\`**, when all three of the following are visible in the diff: (1) the handler is on a component whose render output or shadow-DOM template passes \`children\` or includes a \`<slot>\` element — meaning the caller supplies the nested content; the slot or children must be reachable on the same element the handler is attached to or a direct ancestor of it — a slot on a sibling or unrelated element in the same template (e.g. a decorative icon slot on a separate wrapper div) does not satisfy this condition; (2) the handler fires on that specific key; (3) the handler body contains no reference to \`event.defaultPrevented\`. A child component inside the slot/children can handle the same key for its own dismiss behaviour and call \`event.preventDefault()\`, but without this guard the event still bubbles and closes the outer component too. **Do not flag** handlers on leaf elements (button, input, select, textarea) whose children are fixed by their own template, and do not flag handlers that already reference \`event.defaultPrevented\`.
    - \`as SomeSubtype\` cast applied to the return value of a DOM search or collection API (\`querySelector\`, \`querySelectorAll\`, \`assignedElements\`, \`assignedNodes\`, \`children\`, \`firstElementChild\`, \`lastElementChild\`, \`nextElementSibling\`) to access a method or property that does not exist on the declared return type (e.g. \`assignedElements()[0] as HTMLElement\` to call \`.focus()\` when \`Element\` has no \`.focus()\`), with no preceding \`instanceof\` check — the cast silences a compile error instead of narrowing safely. **Do not flag** \`event.target as X\` or \`event.currentTarget as X\` (the handler's attachment point gives runtime certainty of the subtype), and do not flag casts on values already inside an \`instanceof\` block.
    - This check is always **Category 2** regardless of file type — framework behaviour is never Carbon-specific
 10. **Unsafe ID / key fallback** — any new abstraction argument or JSX key prop that can produce an empty string or non-unique value across instances (e.g. \`id ?? ''\`, \`key={index}\` on reorderable lists) — **Category 2** (diff-visible, no MCP needed)
 11. **Breaking API change without deprecation** — a public export, required prop, or event name removed or renamed in the diff with no deprecation notice or migration comment — **Category 1** (verify the prior API contract via MCP before filing)
 12. **Icon name or size verification** — an icon name or size variant introduced or changed in the diff (e.g. \`Add16\`, \`<AddIcon size={20} />\`) — **Category 1** (verify the icon and size exist via MCP code_search with asset_type: "icon")
-13. **Test coverage gap** — For every changed source file, determine: does this diff introduce a new exported function, new public method, or clearly new runtime behaviour? If yes, check whether the "Changed Files" list contains a corresponding \`__tests__\`, \`.test.\`, or \`.spec.\` file for the changed source. If no test file is present AND new behaviour was introduced, this is a catalogue item. You may discard it only if you can quote a specific diff line showing the new code is covered by an existing inline test or the change is a pure refactoring with no new code paths. **Do not state that test files exist in the changed files list unless you have verified this by reading the "Changed Files" section of PR_REVIEW_REQUEST.md.** — **Category 2**
+13. **Test coverage gap** — For every changed source file, determine: does this diff introduce a new exported function, new public method, or clearly new runtime behaviour? If yes, check whether the "Changed Files" list contains a corresponding \`__tests__\`, \`.test.\`, or \`.spec.\` file for the changed source. If no test file is present AND new behaviour was introduced, this is a catalogue item. You may discard it only if you can quote a specific diff line showing the new code is covered by an existing inline test or the change is a pure refactoring with no new code paths. **Do not state that test files exist in the changed files list unless you have verified this by reading the "Changed Files" section of PR_REVIEW_REQUEST.md.**
+
+**Storybook play() functions count as interaction tests** — do not file a test-coverage finding solely because a separate \`__tests__\` file is absent when a \`play()\` block is present in the same diff covering the changed behaviour. This discard applies to the test-coverage concern only — it does not exempt the file from any other rubric check.
+
+**Stories-file default export change (independent of test coverage)** — if the diff adds or modifies \`args:\` or \`argTypes:\` on the default export of a stories file, check whether this silently changes the rendered output of all existing stories in that file that do not override those values. If yes, this is a catalogue item (new implicit runtime behaviour affecting existing stories). A \`play()\` block does not discharge this check. You may discard this item only if you can quote a specific diff line showing all existing stories in the file already explicitly override the changed args. — **Category 2**
 14. **Changelog / API hygiene** — a public API surface changes (component added, prop added/removed, event renamed) with no entry in a changelog or breaking-changes file. **Scope: apply this check only when NO \`CHANGELOG\`, \`CHANGELOG.md\`, \`BREAKING_CHANGES\`, or \`BREAKING_CHANGES.md\` file appears in the "Changed Files" list.** — **Category 2**
+15. **SCSS structural correctness** — applies to every changed \`.scss\` file. During the same per-file pass, check:
+   a. **Removed sizing constraint with no replacement** — a \`-\` line removes a \`min-block-size\`, \`max-block-size\`, \`min-inline-size\`, or \`max-inline-size\` rule and no \`+\` line in the same file's diff hunks restores an equivalent constraint. Before filing, check whether a compensating rule appears elsewhere in the same diff. If one exists, discard: quote it. — **Category 2**
+   b. **Unscoped selector broadening** — a \`+\` line adds a \`:not(...)\` exclusion or widens a selector without scoping to a modifier class (e.g. \`--sticky-header\`, \`--condensed\`). This is always **Category 2** — do not treat as Rule 11 (breaking API change), which requires MCP. When a single \`+\` line contains multiple selector changes — some narrowing (e.g. adding a parent combinator \`tr:not([...]) >\`) and some broadening (e.g. adding \`:not(.class)\` to an existing exclusion chain) — catalogue and assess each change independently. A narrowing change on the same line does not discharge a broadening change on the same line.
+   c. **Incomplete size-variant set** — the diff adds or modifies explicit \`min-block-size\` or \`block-size\` rules for some size variants (xs/sm/md/lg/xl) but leaves others unaddressed with no inline comment. Check the whole file's diff before filing — do not flag if a variant's row height is intentionally inherited. — **Category 2**
+   d. **Hardcoded size value where a Carbon spacing token exists** — a \`+\` line or retained context line in the same hunk uses \`convert.to-rem(Npx)\` for a value that maps exactly to a Carbon \`$spacing-*\` token. Use this lookup: 16px=\`$spacing-05\`, 24px=\`$spacing-06\`, 32px=\`$spacing-07\`, 40px=\`$spacing-08\`, 48px=\`$spacing-09\`, 64px=\`$spacing-10\`, 80px=\`$spacing-11\`. Suggest the token. Also flag retained \`convert.to-rem()\` calls in unchanged context lines of the same hunk if a token equivalent exists — the PR is an opportunity to clean them. — **Category 2** (token hygiene is diff-visible; no MCP needed). **This check produces a separate catalogue entry for each \`convert.to-rem()\` call — write it as a distinct line in your catalogue alongside any structural entry for the same line. A structural discard (e.g. discarding 15a because a compensating rule exists) does not also discharge this 15d entry. Resolve each independently.**
 
 ## Step 2 — Resolve every pending item
 
@@ -296,6 +312,7 @@ Do not raise a finding on a change until you have checked whether the rest of th
 - "The API looks standard" or "this appears correct" — appearance without evidence is not a valid discard reason for ANY category
 - A successful MCP call about a different question (e.g. confirming an attribute exists) does NOT discharge a pending item about a different concern (e.g. a falsy check, a missing guard, a logic equivalence question) — each pending item must be resolved on its own merits
 - **Stating a factual condition that is not true** — e.g. claiming test files exist in the changed files list when they do not, or claiming the diff does not introduce new behaviour when it does. A discard reason that misstates what the diff or the changed files list contains is invalid. If you are unsure whether a file exists in the changed list, re-read the "Changed Files" section of PR_REVIEW_REQUEST.md before discarding.
+- **Inferring intent from another part of the diff** — concluding that a change is "intentional" or "deliberate" because a related change elsewhere in the diff appears consistent with it (e.g. "the StickyHeader story overrides this arg, so the default export change must be intentional") is not a valid discard reason. Only a diff line that directly shows the concern is resolved — e.g. showing all affected callers already override the changed value — is valid evidence. For the stories default-export check: the only valid discard is a quoted diff line showing every existing story in the file explicitly overrides the changed args.
 
 **Valid discard reasons:**
 - Category 1: MCP returned direct evidence (from an example_clean, props_used, or chunk_text field) that the specific API usage on the specific component is correct — quote the evidence verbatim. Cross-component evidence alone (e.g. toast uses role="status", therefore inline is correct) is NOT a valid discard reason; it is evidence that belongs in mcpEvidence of a minor finding.
@@ -305,12 +322,20 @@ Do not raise a finding on a change until you have checked whether the rest of th
 
 Before writing any JSON, list every \`confirmed finding\` from your catalogue with file path, line, title, severity, and whether MCP verification is complete. Nothing may appear in the JSON that is not in this list. If a confirmed finding still needs MCP evidence, go verify it now before proceeding.
 
+**Severity calibration — assign before writing the JSON:**
+- \`blocking\` — the change breaks a user-facing behaviour or violates an accessibility requirement with no workaround visible in the diff.
+- \`major\` — the change is likely to cause a visible rendering difference, a runtime error, or a regression in production for at least one usage path visible in the diff.
+- \`minor\` — the change is correct but introduces risk of future maintainability debt, an inconsistency a future developer would have to work around, or a subtle behaviour difference that is not immediately breaking. A concern requires evidence of functional impact to reach \`minor\`.
+- \`nit\` — the concern is purely conventional or a hygiene opportunity with no functional consequence (e.g. token vs hardcoded value, missing comment, style inconsistency). Use \`nit\` when the PR author could reasonably merge without addressing it and no user would notice.
+
+**Do not assign \`minor\` or above for:** spacing token substitutions, missing inline comments, changelog omissions on non-public APIs, test coverage for code already covered by a \`play()\` block, or defensive guard omissions (e.g. missing \`event.defaultPrevented\` check) where the risk scenario requires a specific combination of caller usage that is not demonstrated by any code visible in the diff. These are \`nit\` at most.
+
 **Contextual layout token pattern — do not flag as breaking change:**
 When a JS/TS prop default is removed (e.g. \`size = 'md'\` → \`size\`) AND the same diff adds \`@include layout.use('size', $default: 'md', ...)\` in SCSS, the default has moved from the prop layer to the CSS layer — this is the Carbon contextual layout token migration pattern. The component still renders the same default visually. This is NOT a breaking change. Look for \`layout.use\` with a matching \`$default:\` value in the SCSS changes before flagging a removed JS prop default as breaking.
 
 ## Step 4 — Output the JSON
 
-Your ONLY output is the JSON block between BEGIN_REVIEW_JSON and END_REVIEW_JSON markers below. Do not call attempt_completion, do not write prose. Writing the JSON block IS the completion step — do it even when findings is an empty array.
+Your ONLY structured output is the JSON block between BEGIN_REVIEW_JSON and END_REVIEW_JSON markers below. Do not call attempt_completion, do not write any prose after the JSON block. Writing the JSON block IS the completion step — do it even when findings is an empty array.
 
 Primary objective: Find correctness, accessibility, test, migration, and Carbon Design System issues introduced by this PR.
 
@@ -356,6 +381,12 @@ This exception does NOT apply to structural or output questions. A finding about
 
 Vague summaries like "Verified via code_search" or empty strings will cause the finding to be dropped by the parser. If the only available evidence is a cross-component inference, state it explicitly in that form — do NOT synthesize or paraphrase a quote that was not present in the tool response.
 
+**body field rule:** For findings of severity \`minor\`, \`major\`, or \`blocking\`, the body must end with a concrete suggestion in imperative form — what the submitter should do, not just what was observed.
+Good: "…Scope this selector to \`.--data-table--sticky-header\`, or add a comment confirming the broader scope is intentional for all expandable table variants."
+Bad: "…The selector was broadened without a scoping modifier."
+
+Severity reminder: token hygiene, comment style, and opportunity improvements are always \`nit\`. A concern requires evidence of functional impact to reach \`minor\`.
+
 **summaryMarkdown** must contain only:
 1. One or two sentences describing what the PR does
 2. A single line stating the count and severity of findings
@@ -375,11 +406,11 @@ BEGIN_REVIEW_JSON
   "summaryMarkdown": "string — 1 to 3 sentences max, no headings, no emoji, no recommendations",
   "findings": [
     {
-      "severity": "blocking|major|minor|nit",
+      "severity": "nit=convention only | minor=maintainability risk | major=likely runtime impact | blocking=breaks behaviour or a11y",
       "file": "repo-relative path",
       "line": 123,
       "title": "short title — plain text, no pipes or newlines",
-      "body": "specific actionable comment",
+      "body": "observation + concrete suggestion (minor/major/blocking must end with an imperative sentence: what the submitter should do)",
       "carbonVerified": true,
       "verificationSource": "carbon-mcp|not-carbon-specific",
       "mcpEvidence": "direct quote from MCP tool response (required when verificationSource is carbon-mcp, omit otherwise)"

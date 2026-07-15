@@ -424,6 +424,11 @@ function parseReviewOutput(agentOutput) {
         console.error('❌ Invalid finding: missing or invalid body', finding);
         return null;
       }
+
+      // Soft warning: non-nit findings with very short bodies likely lack an actionable suggestion
+      if (finding.body.length < 40 && finding.severity !== 'nit') {
+        console.warn(`⚠️  Finding "${finding.title}" has a short body (${finding.body.length} chars) — may be missing an actionable suggestion`);
+      }
     }
     
     // Filter unverified Carbon findings with strict enforcement
