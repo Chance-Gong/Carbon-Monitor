@@ -1,85 +1,11 @@
-## Pending: Carbon Builder skill support in verificationSource
-
-### What needs to change (deferred)
-
-Two files need updating to fully support `"carbon-builder"` as a valid `verificationSource`
-alongside `"carbon-mcp"`. These changes were implemented and reverted on 2025-07-10.
-
----
-
-### src/reviewPrompt.js
-
-1. **Step 2 instruction (line 301)** — replace:
-   ```
-   - If Category 1: call carbon-builder skill first (use_skill: carbon-builder); if the skill returns no recommendations or no relevant information, then call carbon-mcp. Update the item to `confirmed finding` or `discarded: [reason]`
-   ```
-   with:
-   ```
-   - If Category 1: call carbon-builder skill first by invoking use_skill with name "carbon-builder" — this loads the Carbon Builder protocol into context and governs all subsequent MCP calls. Then use the skill's Discover → Canonicalize → Target protocol to call carbon-mcp tools (code_search, docs_search, get_charts). If the skill is unavailable, call carbon-mcp tools directly. Update the item to `confirmed finding` or `discarded: [reason]`
-   ```
-
-2. **JSON schema verificationSource (line ~415)** — change:
-   ```
-   "verificationSource": "carbon-mcp|not-carbon-specific"
-   "mcpEvidence": "direct quote from MCP tool response (required when verificationSource is carbon-mcp, omit otherwise)"
-   ```
-   to:
-   ```
-   "verificationSource": "carbon-builder|carbon-mcp|not-carbon-specific"
-   "mcpEvidence": "direct quote from MCP tool response (required when verificationSource is carbon-builder or carbon-mcp, omit otherwise)"
-   ```
-
-3. **verificationSource definitions (line ~432)** — add `"carbon-builder"` entry:
-   ```
-   - "carbon-builder": verified via Carbon Builder skill governing Carbon MCP calls — mcpEvidence MUST be a direct quote from the tool response
-   - "carbon-mcp": verified via Carbon MCP directly (skill unavailable) — mcpEvidence MUST be a direct quote from the tool response
-   - "not-carbon-specific": generic correctness, accessibility, test, or migration finding
-   ```
-
-4. **formatInlineComment (line ~78)** — add carbon-builder badge:
-   ```js
-   if (finding.carbonVerified && finding.verificationSource === 'carbon-builder') {
-     comment += `*✓ Verified with Carbon Builder + MCP*\n`;
-   } else if (finding.carbonVerified && finding.verificationSource === 'carbon-mcp') {
-     comment += `*✓ Verified with Carbon MCP*\n`;
-   }
-   ```
-
-5. **formatSummaryComment (line ~173)** — same badge pattern for summary findings.
-
----
-
-### src/reviewParser.js
-
-6. **filterUnverifiedCarbonFindings (line ~118)** — change:
-   ```js
-   // carbon-mcp is the only valid verification source for Carbon findings.
-   const isMcpVerified = finding.carbonVerified === true && finding.verificationSource === 'carbon-mcp';
-   ```
-   to:
-   ```js
-   // carbon-builder and carbon-mcp are both valid verification sources for Carbon findings.
-   // carbon-builder means the Carbon Builder skill governed the MCP calls (preferred).
-   // carbon-mcp means MCP was called directly without the skill (fallback).
-   const isMcpVerified = finding.carbonVerified === true &&
-     (finding.verificationSource === 'carbon-builder' || finding.verificationSource === 'carbon-mcp');
-   ```
-
-7. **Fix-hint log message (line ~161)** — change:
-   ```
-   To fix: Ensure agent uses Carbon MCP tools and quotes tool response in mcpEvidence
-   ```
-   to:
-   ```
-   To fix: Ensure agent uses Carbon Builder skill + Carbon MCP tools and quotes tool response in mcpEvidence
-   ```
-
----
-
-### Why
-The `"carbon-builder"` verificationSource value is defined in the port spec
-(AGENTIC_CARBON_PR_REVIEW_PORT_SPEC.md § Carbon Verification Rules) but was never
-added to the prompt schema or parser. Without it:
-- The agent cannot express in its JSON output that it used the skill
-- The parser filters out any finding with verificationSource "carbon-builder" as unverified
-- The verification badges in comments only render for "carbon-mcp"
+{"id":"e4c07079-1b96-4a1e-8346-8f0b68850d2d","fileUri":"file:///Users/chancegong/Documents/GitHub/Carbon-Monitor/src/reviewParser.js","repoName":"Chance-Gong/Carbon-Monitor","branchName":"main","toolName":"apply_diff","startLine":162,"endLine":162,"taskId":null,"createdAt":1784153769627}
+{"id":"2ae4f680-6ee6-4f7f-a657-96c349f57915","fileUri":"file:///Users/chancegong/Documents/GitHub/Carbon-Monitor/src/reviewParser.js","repoName":"Chance-Gong/Carbon-Monitor","branchName":"main","toolName":"apply_diff","startLine":117,"endLine":118,"taskId":null,"createdAt":1784153769626}
+{"id":"03f6dd1e-7e27-4d61-903b-47512ff83431","fileUri":"file:///Users/chancegong/Documents/GitHub/Carbon-Monitor/src/reviewParser.js","repoName":"Chance-Gong/Carbon-Monitor","branchName":"main","toolName":"apply_diff","startLine":162,"endLine":162,"taskId":null,"createdAt":1784153526177}
+{"id":"b5b0205b-6580-4d14-a629-740cfba00962","fileUri":"file:///Users/chancegong/Documents/GitHub/Carbon-Monitor/src/reviewPrompt.js","repoName":"Chance-Gong/Carbon-Monitor","branchName":"main","toolName":"apply_diff","startLine":173,"endLine":173,"taskId":null,"createdAt":1784153769620}
+{"id":"754d19cd-8268-452f-bf67-6aedfdf6ca70","fileUri":"file:///Users/chancegong/Documents/GitHub/Carbon-Monitor/src/reviewPrompt.js","repoName":"Chance-Gong/Carbon-Monitor","branchName":"main","toolName":"apply_diff","startLine":433,"endLine":433,"taskId":null,"createdAt":1784153769620}
+{"id":"25d154bb-0a3d-4f18-9f13-e63e2bb3882d","fileUri":"file:///Users/chancegong/Documents/GitHub/Carbon-Monitor/src/reviewPrompt.js","repoName":"Chance-Gong/Carbon-Monitor","branchName":"main","toolName":"apply_diff","startLine":415,"endLine":416,"taskId":null,"createdAt":1784153769620}
+{"id":"1810451b-136d-4079-b5af-61c1713da078","fileUri":"file:///Users/chancegong/Documents/GitHub/Carbon-Monitor/src/reviewPrompt.js","repoName":"Chance-Gong/Carbon-Monitor","branchName":"main","toolName":"apply_diff","startLine":301,"endLine":301,"taskId":null,"createdAt":1784153769620}
+{"id":"c35fd459-94be-4d55-b4b6-d4100f5a14de","fileUri":"file:///Users/chancegong/Documents/GitHub/Carbon-Monitor/src/reviewPrompt.js","repoName":"Chance-Gong/Carbon-Monitor","branchName":"main","toolName":"apply_diff","startLine":78,"endLine":78,"taskId":null,"createdAt":1784153769618}
+{"id":"6d10d630-de95-4fd4-8c90-5a477889bd95","fileUri":"file:///Users/chancegong/Documents/GitHub/Carbon-Monitor/src/reviewPrompt.js","repoName":"Chance-Gong/Carbon-Monitor","branchName":"main","toolName":"apply_diff","startLine":416,"endLine":416,"taskId":null,"createdAt":1784153505244}
+{"id":"be15f846-c584-4ae8-8f4c-b95485c9f0dd","fileUri":"file:///Users/chancegong/Documents/GitHub/Carbon-Monitor/src/reviewPrompt.js","repoName":"Chance-Gong/Carbon-Monitor","branchName":"main","toolName":"apply_diff","startLine":173,"endLine":174,"taskId":null,"createdAt":1784153505243}
+{"id":"8f8f1d72-d8f1-4732-b980-57cf21445572","fileUri":"file:///Users/chancegong/Documents/GitHub/Carbon-Monitor/src/reviewPrompt.js","repoName":"Chance-Gong/Carbon-Monitor","branchName":"main","toolName":"apply_diff","startLine":78,"endLine":79,"taskId":null,"createdAt":1784153505243}
