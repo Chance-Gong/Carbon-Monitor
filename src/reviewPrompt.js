@@ -75,7 +75,9 @@ function formatInlineComment(finding) {
   comment += finding.body + '\n\n';
 
   // Only show verification badge for Carbon-specific findings
-  if (finding.carbonVerified && finding.verificationSource === 'carbon-mcp') {
+  if (finding.carbonVerified && finding.verificationSource === 'carbon-builder') {
+    comment += `*✓ Verified with Carbon Builder + MCP*\n`;
+  } else if (finding.carbonVerified && finding.verificationSource === 'carbon-mcp') {
     comment += `*✓ Verified with Carbon MCP*\n`;
   }
 
@@ -170,7 +172,9 @@ function formatSummaryComment({
       comment += `\n**Severity:** ${finding.severity} — ${guidance}\n\n`;
       comment += finding.body + '\n\n';
 
-      if (finding.carbonVerified && finding.verificationSource === 'carbon-mcp') {
+      if (finding.carbonVerified && finding.verificationSource === 'carbon-builder') {
+        comment += `*✓ Verified with Carbon Builder + MCP*\n\n`;
+      } else if (finding.carbonVerified && finding.verificationSource === 'carbon-mcp') {
         comment += `*✓ Verified with Carbon MCP*\n\n`;
       }
 
@@ -298,7 +302,7 @@ In addition, for EVERY changed source file apply these rubric checks during the 
 ## Step 2 — Resolve every pending item
 
 For each \`pending\` item in your catalogue:
-- If Category 1: call carbon-builder skill first (use_skill: carbon-builder); if the skill returns no recommendations or no relevant information, then call carbon-mcp. Update the item to \`confirmed finding\` or \`discarded: [reason]\`
+- If Category 1: call carbon-builder skill first by invoking use_skill with name "carbon-builder" — this loads the Carbon Builder protocol into context and governs all subsequent MCP calls. Then use the skill's Discover → Canonicalize → Target protocol to call carbon-mcp tools (code_search, docs_search, get_charts). If the skill is unavailable, call carbon-mcp tools directly. Update the item to \`confirmed finding\` or \`discarded: [reason]\`
 - If Category 2: decide from the diff alone, then update to \`confirmed finding\` or \`discarded: [reason]\`
 
 A \`pending\` item may never be silently dropped. If you move to Step 3 with any item still \`pending\`, go back.
@@ -412,8 +416,8 @@ BEGIN_REVIEW_JSON
       "title": "short title — plain text, no pipes or newlines",
       "body": "observation + concrete suggestion (minor/major/blocking must end with an imperative sentence: what the submitter should do)",
       "carbonVerified": true,
-      "verificationSource": "carbon-mcp|not-carbon-specific",
-      "mcpEvidence": "direct quote from MCP tool response (required when verificationSource is carbon-mcp, omit otherwise)"
+      "verificationSource": "carbon-builder|carbon-mcp|not-carbon-specific",
+      "mcpEvidence": "direct quote from MCP tool response (required when verificationSource is carbon-builder or carbon-mcp, omit otherwise)"
     }
   ],
   "findingsTable": [
@@ -430,7 +434,8 @@ BEGIN_REVIEW_JSON
 END_REVIEW_JSON
 
 verificationSource values:
-- "carbon-mcp": verified via Carbon MCP — mcpEvidence MUST be a direct quote from the tool response
+- "carbon-builder": verified via Carbon Builder skill governing Carbon MCP calls — mcpEvidence MUST be a direct quote from the tool response
+- "carbon-mcp": verified via Carbon MCP directly (skill unavailable) — mcpEvidence MUST be a direct quote from the tool response
 - "not-carbon-specific": generic correctness, accessibility, test, or migration finding
 
 findingsTable rules:

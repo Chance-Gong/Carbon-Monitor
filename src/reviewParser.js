@@ -114,8 +114,11 @@ function filterUnverifiedCarbonFindings(findings) {
       return true;
     }
 
-    // carbon-mcp is the only valid verification source for Carbon findings.
-    const isMcpVerified = finding.carbonVerified === true && finding.verificationSource === 'carbon-mcp';
+    // carbon-builder and carbon-mcp are both valid verification sources for Carbon findings.
+    // carbon-builder means the Carbon Builder skill governed the MCP calls (preferred).
+    // carbon-mcp means MCP was called directly without the skill (fallback).
+    const isMcpVerified = finding.carbonVerified === true &&
+      (finding.verificationSource === 'carbon-builder' || finding.verificationSource === 'carbon-mcp');
 
     if (!isMcpVerified && !looksCarbonSpecific(finding)) {
       return true; // Not Carbon-specific, pass through
@@ -159,7 +162,7 @@ function filterUnverifiedCarbonFindings(findings) {
 
     if (filteredCount > 0) {
       console.log(`\n❌ ${filteredCount} Carbon finding(s) filtered — missing or hallucinated MCP verification`);
-      console.log(`   To fix: Ensure agent uses Carbon MCP tools and quotes tool response in mcpEvidence`);
+      console.log(`   To fix: Ensure agent uses Carbon Builder skill + Carbon MCP tools and quotes tool response in mcpEvidence`);
     }
   }
 
