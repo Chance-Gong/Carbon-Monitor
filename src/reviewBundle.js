@@ -198,6 +198,19 @@ Mandatory:
       rules
     );
 
+    // Copy the carbon-builder skill into the bundle workspace.
+    // Bob resolves skills from the CWD's .bob/skills/ directory; without this
+    // copy the local .bob/ shadows ~/.bob/skills/ and the skill is never found.
+    // This does NOT force activation — it only makes the skill discoverable.
+    const skillSrc = path.join(__dirname, '..', '.bob', 'skills', 'carbon-builder');
+    const skillDest = path.join(bobDir, 'skills', 'carbon-builder');
+    try {
+      await copyDirectory(skillSrc, skillDest);
+    } catch (skillErr) {
+      // Non-fatal — review continues; skill simply won't be available
+      console.warn('⚠️  Could not copy carbon-builder skill into bundle:', skillErr.message);
+    }
+
     // Note: carbon-mcp is configured globally via streamable HTTP in ~/.bob/settings.json
     // No local MCP config is needed in the bundle directory
 

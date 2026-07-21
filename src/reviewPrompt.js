@@ -302,7 +302,7 @@ In addition, for EVERY changed source file apply these rubric checks during the 
 ## Step 2 — Resolve every pending item
 
 For each \`pending\` item in your catalogue:
-- If Category 1: call carbon-builder skill first by invoking use_skill with name "carbon-builder" — this loads the Carbon Builder protocol into context and governs all subsequent MCP calls. Then use the skill's Discover → Canonicalize → Target protocol to call carbon-mcp tools (code_search, docs_search, get_charts). If the skill is unavailable, call carbon-mcp tools directly. Update the item to \`confirmed finding\` or \`discarded: [reason]\`
+- If Category 1: do NOT rely on use_skill. Instead, explicitly read the Carbon Builder skill files with read_file using paths under .bob/skills/carbon-builder/ (start with .bob/skills/carbon-builder/SKILL.md, then read any needed references/*.md files) before making Carbon MCP calls. Use those skill files as the governing protocol for all subsequent carbon-mcp calls (code_search, docs_search, get_charts). If the skill files are unavailable, call carbon-mcp tools directly. Update the item to \`confirmed finding\` or \`discarded: [reason]\`
 - If Category 2: decide from the diff alone, then update to \`confirmed finding\` or \`discarded: [reason]\`
 
 A \`pending\` item may never be silently dropped. If you move to Step 3 with any item still \`pending\`, go back.
@@ -434,7 +434,7 @@ BEGIN_REVIEW_JSON
 END_REVIEW_JSON
 
 verificationSource values:
-- "carbon-builder": verified via Carbon Builder skill governing Carbon MCP calls — mcpEvidence MUST be a direct quote from the tool response
+- "carbon-builder": verified via Carbon Builder skill files governing Carbon MCP calls, with at least one explicit read_file call to .bob/skills/carbon-builder/SKILL.md or another file under .bob/skills/carbon-builder/ visible in the transcript before the MCP evidence is used — mcpEvidence MUST be a direct quote from the tool response
 - "carbon-mcp": verified via Carbon MCP directly (skill unavailable) — mcpEvidence MUST be a direct quote from the tool response
 - "not-carbon-specific": generic correctness, accessibility, test, or migration finding
 

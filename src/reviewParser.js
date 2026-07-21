@@ -96,16 +96,56 @@ function looksCarbonSpecific(finding) {
  * @param {Array} findings - Array of finding objects
  * @returns {Object} - { filtered: Array, stats: Object }
  */
-function filterUnverifiedCarbonFindings(findings) {
+function extractCarbonBuilderSkillReads(agentOutput = '') {
+  const skillReadPatterns = [
+    /\[using tool read_file:\s*([^\]]*\.bob\/skills\/carbon-builder\/[^\]]*)\]/gi,
+    /read_file[^\n]*path["'=:\s]+([^\s"'\],]*\.bob\/skills\/carbon-builder\/[^\s"'\],]*)/gi,
+    /Contents of file\s+([^:\n]*\.bob\/skills\/carbon-builder\/[^:\n]*):/gi,
+    /relative to:\s*(\.bob\/skills\/carbon-builder\/[^\s\n]*)/gi
+  ];
+
+  const skillFilesRead = [];
+  const seenSkillFiles = new Set();
+
+  for (const pattern of skillReadPatterns) {
+    let skillMatch;
+    while ((skillMatch = pattern.exec(agentOutput)) !== null) {
+      const filePath = skillMatch[1].trim();
+      if (!seenSkillFiles.has(filePath)) {
+        seenSkillFiles.add(filePath);
+        skillFilesRead.push(filePath);
+      }
+    }
+  }
+
+  return skillFilesRead;
+}
+
+function filterUnverifiedCarbonFindings(findings, transcriptMetadata = {}) {
   // Skip filter if testing mode is enabled
   if (process.env.GITHUB_AI_AGENT_SKIP_CARBON_FILTER === 'true') {
     console.log('⚠️  Carbon verification filter DISABLED (test mode)');
-    return { filtered: findings, stats: { total: findings.length, filtered: 0, carbonVerified: 0 } };
+    return {
+      filtered: findings,
+      stats: {
+        total: findings.length,
+        filtered: 0,
+        carbonVerified: 0,
+        carbonSpecific: 0,
+        carbonBuilderVerified: 0,
+        carbonBuilderRejected: 0,
+        skillFilesRead: transcriptMetadata.skillFilesRead || []
+      }
+    };
   }
 
   let carbonSpecificCount = 0;
   let carbonVerifiedCount = 0;
   let filteredCount = 0;
+  let carbonBuilderVerifiedCount = 0;
+  let carbonBuilderRejectedCount = 0;
+  const skillFilesRead = transcriptMetadata.skillFilesRead || [];
+  const hasCarbonBuilderSkillReads = skillFilesRead.length > 0;
 
   const filtered = findings.filter((finding) => {
     // Non-Carbon findings pass through unconditionally — no auto-correction.
@@ -114,17 +154,23 @@ function filterUnverifiedCarbonFindings(findings) {
       return true;
     }
 
-    // carbon-builder and carbon-mcp are both valid verification sources for Carbon findings.
-    // carbon-builder means the Carbon Builder skill governed the MCP calls (preferred).
-    // carbon-mcp means MCP was called directly without the skill (fallback).
+    const isCarbonBuilderFinding = finding.verificationSource === 'carbon-builder';
     const isMcpVerified = finding.carbonVerified === true &&
-      (finding.verificationSource === 'carbon-builder' || finding.verificationSource === 'carbon-mcp');
+      (isCarbonBuilderFinding || finding.verificationSource === 'carbon-mcp');
 
     if (!isMcpVerified && !looksCarbonSpecific(finding)) {
       return true; // Not Carbon-specific, pass through
     }
 
     carbonSpecificCount++;
+
+    if (isCarbonBuilderFinding && !hasCarbonBuilderSkillReads) {
+      filteredCount++;
+      carbonBuilderRejectedCount++;
+      console.log(`❌ FILTERED carbon-builder finding without skill file reads: "${finding.title}"`);
+      console.log('   Reason: verificationSource=carbon-builder but no .bob/skills/carbon-builder/ read_file calls were detected in the transcript');
+      return false;
+    }
 
     // HALLUCINATION CHECK: carbon-mcp findings must include a real quote from the
     // tool response as evidence. Vague phrases or empty strings are treated as
@@ -142,6 +188,9 @@ function filterUnverifiedCarbonFindings(findings) {
       }
 
       carbonVerifiedCount++;
+      if (isCarbonBuilderFinding) {
+        carbonBuilderVerifiedCount++;
+      }
       return true;
     }
 
@@ -158,6 +207,8 @@ function filterUnverifiedCarbonFindings(findings) {
     console.log(`   Total findings: ${findings.length}`);
     console.log(`   Carbon-specific: ${carbonSpecificCount}`);
     console.log(`   MCP-verified: ${carbonVerifiedCount}`);
+    console.log(`   Carbon Builder transcript-backed: ${carbonBuilderVerifiedCount}`);
+    console.log(`   Carbon Builder rejected (no skill reads): ${carbonBuilderRejectedCount}`);
     console.log(`   Filtered (unverified): ${filteredCount}`);
 
     if (filteredCount > 0) {
@@ -172,7 +223,10 @@ function filterUnverifiedCarbonFindings(findings) {
       total: findings.length,
       carbonSpecific: carbonSpecificCount,
       carbonVerified: carbonVerifiedCount,
-      filtered: filteredCount
+      carbonBuilderVerified: carbonBuilderVerifiedCount,
+      carbonBuilderRejected: carbonBuilderRejectedCount,
+      filtered: filteredCount,
+      skillFilesRead
     }
   };
 }
@@ -314,6 +368,8 @@ function repairTruncatedJSON(jsonStr) {
  * @returns {Object|null} - Parsed review object or null if invalid
  */
 function parseReviewOutput(agentOutput) {
+  const skillFilesRead = extractCarbonBuilderSkillReads(agentOutput);
+
   try {
     // Find JSON markers
     const jsonStart = agentOutput.indexOf('BEGIN_REVIEW_JSON');
@@ -346,7 +402,15 @@ function parseReviewOutput(agentOutput) {
           summaryMarkdown: prose,
           findings: [],
           shouldPostInlineComments: false,
-          verificationStats: { total: 0, carbonSpecific: 0, carbonVerified: 0, filtered: 0 },
+          verificationStats: {
+            total: 0,
+            carbonSpecific: 0,
+            carbonVerified: 0,
+            carbonBuilderVerified: 0,
+            carbonBuilderRejected: 0,
+            filtered: 0,
+            skillFilesRead
+          },
           // New fields — safe defaults so callers never dereference undefined
           hasCatalogue: false,
           recommendation: 'looks-good',
@@ -435,7 +499,7 @@ function parseReviewOutput(agentOutput) {
     }
     
     // Filter unverified Carbon findings with strict enforcement
-    const filterResult = filterUnverifiedCarbonFindings(review.findings);
+    const filterResult = filterUnverifiedCarbonFindings(review.findings, { skillFilesRead });
     review.findings = filterResult.filtered;
     
     // Store verification stats for reporting
