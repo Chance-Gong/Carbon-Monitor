@@ -179,15 +179,29 @@ ${diffToWrite}
 
 You are reviewing a pull request in ${owner}/${repo}.
 
-Mandatory:
-- Use Carbon MCP tools (docs_search, code_search, get_charts) for ALL Carbon Design System verification
-- Verify components, props, tokens, icons, patterns, and accessibility claims using MCP tools
-- Set verificationSource to "carbon-mcp" for all Carbon-verified findings
-- Set verificationSource to "not-carbon-specific" for generic code review findings
-- Prefer specific actionable findings over general advice
-- Do not edit files
-- Do not run package manager install commands
-- Produce only the requested JSON object and review Markdown
+## TOOL FALLBACK — MANDATORY (do not stop because a tool is unavailable)
+
+- MANDATORY: Invoke \`carbon-builder\` skill before every Category 1 Carbon finding. Invoke via the \`Skill\` tool.
+- MANDATORY: If \`carbon-builder\` is unavailable, fall back to Carbon MCP (code_search, docs_search, get_charts).
+  Log: ⚠️ carbon-builder UNAVAILABLE — MCP fallback: [component/attribute]
+- MANDATORY: If Carbon MCP is also unavailable, proceed from model knowledge.
+  Log: ⚠️ CARBON SKILL/MCP UNAVAILABLE — used model knowledge for: [component] at [file:line]
+- MANDATORY: Tool unavailability is NOT a reason to stop or drop a finding. Uptime is mandatory.
+
+## Carbon API source of truth
+
+Before making any Carbon-specific claim — prop, attribute name, token, icon, variant, or accessibility pattern — invoke the \`carbon-builder\` skill.
+Before looking up any prop, import path, or token name, invoke \`carbon-builder\`.
+
+- \`carbon-builder\` skill is the preferred ground truth for ALL Carbon-specific claims.
+- Carbon MCP (code_search, docs_search, get_charts) is the Tier 2 fallback — use it when \`carbon-builder\` is unavailable.
+- Model knowledge is Tier 3 — use it only when both skill and MCP are unreachable.
+
+## Mandatory rules
+
+- Do not edit files.
+- Do not run package manager install commands.
+- Produce only the requested JSON object and review Markdown.
 `;
 
     // Write agent rules for Bob

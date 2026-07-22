@@ -241,7 +241,7 @@ Read PR_REVIEW_REQUEST.md. It contains the PR description, changed files list, a
 As you read each file, write one line per suspicious item in this format:
 \`[file:line] — [what you saw] — [Category 1 / Category 2] — pending\`
 
-Category 1 = the finding is about whether a specific Carbon element accepts a specific attribute, prop, or variant, OR whether a specific quoted string argument value is valid for a Carbon utility mixin — must verify with MCP.
+Category 1 = the finding is about whether a specific Carbon element accepts a specific attribute, prop, or variant — OR whether a specific quoted string argument value is valid for a Carbon utility mixin must verify with Carbon Builder skill.
 Category 2 = generic correctness, accessibility omission, or duplicate markup visible from the diff alone — no MCP needed.
 
 Examples of the format (not exhaustive — apply to any change you see):
@@ -312,7 +312,18 @@ In addition, for EVERY changed source file apply these rubric checks during the 
 ## Step 2 — Resolve every pending item
 
 For each \`pending\` item in your catalogue:
-- If Category 1: do NOT rely on use_skill. Instead, explicitly read the Carbon Builder skill files with read_file using paths under .bob/skills/carbon-builder/ (start with .bob/skills/carbon-builder/SKILL.md, then read any needed references/*.md files) before making Carbon MCP calls. Use those skill files as the governing protocol for all subsequent carbon-mcp calls (code_search, docs_search, get_charts). If the skill files are unavailable, call carbon-mcp tools directly. Update the item to \`confirmed finding\` or \`discarded: [reason]\`
+- If Category 1: **Carbon API source of truth** — the \`carbon-builder\` skill and Carbon MCP are the preferred ground truth for all Carbon-specific claims.
+  1. **PREFER** the \`carbon-builder\` skill. Invoke via the \`Skill\` tool before making any Carbon claim. Before looking up any prop, attribute name, or token, invoke \`carbon-builder\`.
+  2. **FALLBACK** to Carbon MCP tools directly when \`carbon-builder\` is unreachable:
+     - \`code_search\` — component props, variants, attribute names, icons
+     - \`docs_search\` — design rationale, token semantics, accessibility rules
+     - \`get_charts\` — Carbon Charts source and options
+     - Log: \`⚠️ carbon-builder UNAVAILABLE — MCP fallback: [component/attribute]\`
+  3. **FALLBACK** to model knowledge only when both above are unreachable. Log: \`⚠️ CARBON SKILL/MCP UNAVAILABLE — used model knowledge for: [component] at [file:line]\`
+
+  **The review MUST NOT halt because a tier is unavailable. Uptime is mandatory.**
+
+  Update the item to \`confirmed finding\` or \`discarded: [reason]\`
 - If Category 2: decide from the diff alone, then update to \`confirmed finding\` or \`discarded: [reason]\`
 
 A \`pending\` item may never be silently dropped. If you move to Step 3 with any item still \`pending\`, go back.
@@ -354,17 +365,19 @@ Your ONLY structured output is the JSON block between BEGIN_REVIEW_JSON and END_
 Primary objective: Find correctness, accessibility, test, migration, and Carbon Design System issues introduced by this PR.
 
 **Carbon verification rule:**
-For any finding about a Carbon component's API (props, tokens, icons, patterns, accessibility), you MUST verify it using Carbon MCP tools (server: \`carbon-mcp\`): code_search, docs_search, get_charts.
-If Carbon MCP is unavailable or returns no usable response, DO NOT reclassify the finding as Category 2 — omit it entirely and note in summaryMarkdown that Carbon findings were skipped due to MCP unavailability.
+For any finding about a Carbon component's API (props, tokens, icons, patterns, accessibility), invoke the \`carbon-builder\` skill first. Before looking up any prop, attribute name, import path, or token name, invoke \`carbon-builder\`. If \`carbon-builder\` is unavailable, fall back to Carbon MCP tools (\`code_search\`, \`docs_search\`, \`get_charts\` via server: \`carbon-mcp\`); fall back to model memory only when Carbon MCP is also unreachable.
+If Carbon MCP is unavailable or returns no usable response, DO NOT reclassify the finding as Category 2 — keep the finding and note in summaryMarkdown that Carbon verification used model memory.
 
 **Two categories only:**
 
 Category 1 — Carbon API finding: about a Carbon component's props, tokens, variants, or accessibility patterns.
-- MUST verify with carbon-mcp tools before posting
+- MANDATORY: Invoke the \`carbon-builder\` skill for every Category 1 recommendation you make. Invoke via the \`Skill\` tool when available.
+- MANDATORY: If \`carbon-builder\` is unavailable, fall back to Carbon MCP tools (\`code_search\`, \`docs_search\`, \`get_charts\`).
+- MANDATORY: Tool unavailability is NOT a reason to drop the finding. The review MUST continue.
 - Set: carbonVerified: true, mcpEvidence MUST be a direct quote from the tool response
-- verificationSource: set based on whether you read the Carbon Builder skill file first:
-  - "carbon-builder" — if you called read_file on .bob/skills/carbon-builder/SKILL.md (or any file under .bob/skills/carbon-builder/) before making MCP calls for this finding
-  - "carbon-mcp" — if you called MCP tools directly without reading the skill file first (skill unavailable or unread)
+- verificationSource: set based on which tier resolved this finding:
+  - "carbon-builder" — if the \`carbon-builder\` skill was consulted (any file under .bob/skills/carbon-builder/) before MCP calls for this finding
+  - "carbon-mcp" — if \`carbon-builder\` was unavailable and MCP tools were used directly as fallback
 - If MCP unavailable or tool call fails: omit the finding, do NOT reclassify it as not-carbon-specific
 
 Category 2 — Non-Carbon finding: generic correctness, accessibility, test coverage, or migration issue visible in the diff.
