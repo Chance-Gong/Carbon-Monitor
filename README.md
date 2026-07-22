@@ -116,7 +116,7 @@ Full variable reference:
 | `BOBSHELL_API_KEY` | ✅ | — | Bob Shell API key |
 | `GITHUB_AI_AGENT_OWNER` | ❌ | `carbon-design-system` | Repository owner |
 | `GITHUB_AI_AGENT_REPO` | ❌ | `carbon` | Repository name |
-| `GITHUB_AI_AGENT_CLI` | ❌ | `codex` | Must be set to `bob` |
+| `GITHUB_AI_AGENT_CLI` | ❌ | `bob` | Agent to use — only `bob` is supported |
 | `GITHUB_AI_AGENT_MAX_PRS` | ❌ | `5` | Max PRs reviewed per run |
 | `GITHUB_AI_AGENT_DAYS_BACK` | ❌ | `21` | How far back to look for PRs (days) |
 | `GITHUB_AI_AGENT_MAX_DIFF_CHARS` | ❌ | `120000` | Diff truncation limit |

@@ -7,7 +7,7 @@
 const GITHUB_OWNER = process.env.GITHUB_AI_AGENT_OWNER || 'carbon-design-system';
 const GITHUB_REPO = process.env.GITHUB_AI_AGENT_REPO || 'carbon';
 const REVIEW_LABEL = process.env.GITHUB_AI_AGENT_REVIEW_LABEL || 'AIReviewed';
-const REVIEW_AGENT = process.env.GITHUB_AI_AGENT_CLI || 'codex';
+const REVIEW_AGENT = process.env.GITHUB_AI_AGENT_CLI || 'bob';
 
 const N_DAYS_SINCE_PR_CREATED = Number(process.env.GITHUB_AI_AGENT_DAYS_BACK || 21);
 const MAX_DIFF_CHARS = Number(process.env.GITHUB_AI_AGENT_MAX_DIFF_CHARS || 120000);
