@@ -1,368 +1,384 @@
 # Carbon Monitor
 
-AI-powered PR review agent for the Carbon Design System repository. This tool automatically reviews pull requests using CLI agents (Bob, Claude, or Codex) and provides structured feedback with Carbon-specific verification.
+Automated PR review agent for the `carbon-design-system/carbon` monorepo. Carbon Monitor fetches open, unreviewed pull requests, runs them through Bob (IBM's AI CLI agent), and posts structured review comments directly on the PR — including inline comments on specific diff lines and a summary comment with a final recommendation.
 
-## Features
+Carbon-specific claims (component props, tokens, icons, accessibility patterns) are verified at review time using the Carbon MCP server before they appear in any posted finding.
 
-- ✅ **Modular Architecture** - Clean separation of concerns across 5 specialized modules
-- ✅ **CLI Agent Support** - Works with Bob, Claude, or Codex
-- ✅ **Carbon Verification** - Validates Carbon-specific claims using Carbon Builder/MCP
-- ✅ **Structured Output** - JSON-formatted findings with severity levels
-- ✅ **Token Usage Tracking** - Estimates and reports token consumption per PR review
-- ✅ **Minimal Metadata** - Only adds `AIReviewed` label (no complex automation)
-- ✅ **Single Repository** - Focused on `carbon-design-system/carbon`
+---
+
+## How It Works
+
+1. **Fetch** — Queries GitHub for open PRs and excludes: drafts, PRs older than 21 days (configurable), PRs already labelled `AIReviewed`, and bot-authored PRs (Dependabot, Renovate, etc.). Up to 5 PRs are reviewed per run (configurable).
+
+2. **Bundle** — For each PR, builds a temporary workspace under `/private/tmp` containing:
+   - `PR_REVIEW_REQUEST.md` — PR description, changed files list, and full unified diff in one file
+   - `pr.json` / `files.json` / `diff.patch` — raw metadata
+   - `.bob/rules/01-output.md` — agent behavioural rules injected into Bob's context
+   - `.bob/skills/carbon-builder/` — Carbon Builder skill copied from the local workspace so Bob can load it inside the bundle directory
+
+3. **Review** — Runs Bob in advanced mode (`bob -p <prompt> --yolo --chat-mode advanced --allowed-mcp-server-names carbon-mcp`) against the bundle directory. Bob works through a structured protocol:
+   - **Step 1** — Reads `PR_REVIEW_REQUEST.md` and writes a visible catalogue of every suspicious item per file, classified as Category 1 (Carbon API — requires MCP) or Category 2 (generic — diff-visible).
+   - **Step 2** — Resolves every pending catalogue item. Category 1 items are verified using the Carbon Builder skill and Carbon MCP tools (`code_search`, `docs_search`, `get_charts`). Category 2 items are resolved from the diff alone.
+   - **Step 3** — Compiles the confirmed findings list with severity (`blocking`, `major`, `minor`, `nit`).
+   - **Step 4** — Outputs a structured JSON block between `BEGIN_REVIEW_JSON` / `END_REVIEW_JSON` markers.
+
+4. **Parse** — `reviewParser.js` extracts the JSON, validates it, detects truncation or collapsed-thinking runs, and computes a recommendation (`consider-revising`, `suggested-improvements`, or `looks-good`) from the finding severities.
+
+5. **Post** — Findings that map to a line in the diff are posted as inline GitHub review comments. Remaining findings and the overall summary are posted as a PR issue comment. The `AIReviewed` label is added to the PR.
+
+6. **Cleanup** — The temporary bundle directory is deleted (or kept if `GITHUB_AI_AGENT_KEEP_ARTIFACTS=true`).
+
+---
 
 ## Architecture
 
 ```
 Carbon-Monitor/
 ├── src/
-│   ├── index.js           # Main orchestrator
-│   ├── githubClient.js    # GitHub API operations
-│   ├── reviewBundle.js    # Temporary workspace builder
-│   ├── agentRunner.js     # CLI agent execution
-│   ├── reviewParser.js    # JSON output parsing
-│   └── reviewPrompt.js    # Comment formatting
+│   ├── index.js           # Orchestrator — fetches PRs, coordinates all steps
+│   ├── githubClient.js    # GitHub API wrapper (fetch PRs/diffs/files, post comments, add labels)
+│   ├── reviewBundle.js    # Builds the temp workspace Bob runs inside
+│   ├── agentRunner.js     # Spawns the Bob process, captures output
+│   ├── reviewParser.js    # Parses Bob's JSON output, filters findings, computes recommendation
+│   ├── reviewPrompt.js    # Builds the review prompt; formats summary and inline comments
+│   ├── diffMapper.js      # Maps finding file+line to a GitHub diff position for inline comments
+│   └── api/
+│       ├── server.js      # REST API server (in development — see API Server section)
+│       └── tokenManager.js # Carbon MCP token refresh logic
+├── tests/
+│   ├── test-agent.js
+│   ├── test-parser.js
+│   ├── test-diff-mapper.js
+│   └── test-truncation-edge-cases.js
 ├── docs/
 │   ├── AGENTIC_CARBON_PR_REVIEW_PORT_SPEC.md
-│   └── CARBON_PORT_COMPARISON.md
-├── tests/
-│   └── test-agent.js
-├── package.json
+│   ├── CARBON_PORT_COMPARISON.md
+│   └── TOKEN_USAGE_TRACKING.md
 ├── .env.example
-└── README.md
+├── QUICKSTART.md
+└── package.json
 ```
+
+---
 
 ## Prerequisites
 
 1. **Node.js** >= 18.0.0
-2. **GitHub Token** with repo permissions
-3. **CLI Agent** (choose one):
-   - **Bob Shell** - Best for IBM office/VPN (requires `BOBSHELL_API_KEY`)
-   - **Claude** - Works anywhere (requires `ANTHROPIC_API_KEY`)
-   - **Codex** - Alternative option
-4. **carbon-mcp** - MCP server for Carbon verification
-   ```bash
-   npm install -g carbon-mcp
-   ```
+2. **GitHub token** with `repo` and `write:discussion` scopes
+3. **Bob Shell CLI** installed and on `PATH`
+4. **Carbon MCP** configured globally in Bob as a streamable-HTTP connection (see setup below)
+
+---
 
 ## Installation
 
-1. Clone or copy this directory to your system
-
-2. Install dependencies:
 ```bash
+git clone https://github.com/your-org/Carbon-Monitor.git
 cd Carbon-Monitor
 npm install
 ```
 
-3. Install your chosen CLI agent:
-```bash
-# For Bob (recommended)
-npm install -g @ibm/bob-shell
-or
-npm install -g bob-cli
-```
-
-4. **Configure carbon-mcp for Bob** (required for Carbon verification):
-```bash
-bob mcp add carbon-mcp npx -y carbon-mcp
-bob mcp list  # Verify it shows: ✓ carbon-mcp: npx -y carbon-mcp (stdio) - Connected
-```
-
-5. Configure environment:
-```bash
-cp .env.example .env
-# Edit .env with your credentials
-```
-
-**For detailed Carbon verification setup, see [`CARBON_SETUP.md`](CARBON_SETUP.md)**
+---
 
 ## Configuration
 
-Edit `.env` file:
+### 1. Environment variables
 
 ```bash
-# GitHub Configuration
-GITHUB_AI_AGENT_TOKEN=ghp_your_token_here
-GITHUB_AI_AGENT_OWNER=carbon-design-system
-GITHUB_AI_AGENT_REPO=carbon
-
-# CLI Agent (choose one: bob, claude, or codex)
-GITHUB_AI_AGENT_CLI=bob
-
-# Agent API Keys (depending on which agent you use)
-BOBSHELL_API_KEY=your_bob_key_here
-ANTHROPIC_API_KEY=your_claude_key_here
-
-# Optional Configuration
-GITHUB_AI_AGENT_MAX_PRS=5
-GITHUB_AI_AGENT_DAYS_BACK=21
-GITHUB_AI_AGENT_REVIEW_LABEL=AIReviewed
+cp .env.example .env
 ```
 
-## Usage
+Edit `.env`:
 
-### Run the Agent
+```bash
+# Required
+GITHUB_AI_AGENT_TOKEN=ghp_your_github_token_here
+BOBSHELL_API_KEY=your_bob_api_key_here
+
+# Defaults shown — override as needed
+GITHUB_AI_AGENT_OWNER=carbon-design-system
+GITHUB_AI_AGENT_REPO=carbon
+GITHUB_AI_AGENT_CLI=bob
+GITHUB_AI_AGENT_MAX_PRS=5
+GITHUB_AI_AGENT_DAYS_BACK=21
+GITHUB_AI_AGENT_MAX_DIFF_CHARS=120000
+GITHUB_AI_AGENT_REVIEW_LABEL=AIReviewed
+GITHUB_AI_AGENT_POST_INLINE_COMMENTS=true
+GITHUB_AI_AGENT_POST_SUMMARY_COMMENT=true
+GITHUB_AI_AGENT_KEEP_ARTIFACTS=false
+```
+
+Full variable reference:
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `GITHUB_AI_AGENT_TOKEN` | ✅ | — | GitHub personal access token |
+| `BOBSHELL_API_KEY` | ✅ | — | Bob Shell API key |
+| `GITHUB_AI_AGENT_OWNER` | ❌ | `carbon-design-system` | Repository owner |
+| `GITHUB_AI_AGENT_REPO` | ❌ | `carbon` | Repository name |
+| `GITHUB_AI_AGENT_CLI` | ❌ | `codex` | Must be set to `bob` |
+| `GITHUB_AI_AGENT_MAX_PRS` | ❌ | `5` | Max PRs reviewed per run |
+| `GITHUB_AI_AGENT_DAYS_BACK` | ❌ | `21` | How far back to look for PRs (days) |
+| `GITHUB_AI_AGENT_MAX_DIFF_CHARS` | ❌ | `120000` | Diff truncation limit |
+| `GITHUB_AI_AGENT_REVIEW_LABEL` | ❌ | `AIReviewed` | Label added after review |
+| `GITHUB_AI_AGENT_POST_INLINE_COMMENTS` | ❌ | `true` | Post inline diff comments |
+| `GITHUB_AI_AGENT_POST_SUMMARY_COMMENT` | ❌ | `true` | Post summary issue comment |
+| `GITHUB_AI_AGENT_KEEP_ARTIFACTS` | ❌ | `false` | Keep temp bundle directory for debugging |
+
+### 2. Bob Shell
+
+Install Bob Shell and trust the directories it needs for MCP tool access:
+
+```bash
+npm install -g bobshell
+bob --version
+
+bob trust /private/tmp
+bob trust /path/to/Carbon-Monitor
+```
+
+### 3. Carbon MCP (streamable HTTP)
+
+Carbon Monitor uses Carbon MCP over streamable HTTP, not `npx carbon-mcp`. Create `~/.bob/settings/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "carbon-mcp": {
+      "type": "streamable-http",
+      "url": "https://mcp.carbondesignsystem.com/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_IBM_JWT_TOKEN",
+        "X-MCP-Session": "YOUR_SESSION_ID"
+      }
+    }
+  }
+}
+```
+
+Verify it is connected:
+
+```bash
+bob mcp list
+# Expected: ✓ carbon-mcp (streamable-http) - Connected
+```
+
+> **Note:** IBM JWT tokens expire. The API server (see below) is being built to automate token refresh so the MCP connection stays valid when running in the cloud.
+
+---
+
+## Running
+
+### One-off review run
 
 ```bash
 npm start
-```
-
-This will:
-1. Fetch open PRs without the `AIReviewed` label
-2. For each PR:
-   - Fetch diff and changed files
-   - Build a temporary review workspace
-   - Run the CLI agent review
-   - Parse structured JSON output
-   - Filter unverified Carbon claims
-   - Post spec-compliant comment
-   - Add `AIReviewed` label
-   - Clean up temporary files
-
-### Test the Agent
-
-```bash
-npm test
-```
-
-### Test with Forked Carbon Repository
-
-For safe, realistic testing with actual Carbon PRs, see the comprehensive guide:
-
-**[📖 Testing with Forked Carbon Repository](docs/TESTING_WITH_FORKED_CARBON.md)**
-
-This guide covers:
-- Forking and configuring the Carbon repo
-- Creating realistic test PRs
-- Running end-to-end tests
-- Testing different scenarios
-- Troubleshooting common issues
-
-### Run Manually
-
-```bash
+# or
 node src/index.js
 ```
 
-## How It Works
+### Tests
 
-### 1. GitHub Client (`githubClient.js`)
-- Fetches reviewable PRs (open, no review label)
-- Fetches PR diffs and changed files
-- Posts review comments
-- Adds labels
+```bash
+npm test                # agent integration test
+npm run test:parser     # reviewParser unit tests
+npm run test:diff       # diffMapper unit tests
+npm run test:all        # parser + diffMapper
+```
 
-### 2. Review Bundle (`reviewBundle.js`)
-- Creates temporary workspace with PR context
-- Generates files:
-  - `pr.json` - PR metadata
-  - `files.json` - Changed files list
-  - `diff.patch` - Unified diff
-  - `PR_REVIEW_REQUEST.md` - Human-readable context
-  - `.roo/rules/carbon-review-rules.md` - Carbon-specific rules
+### API server (in development)
 
-### 3. Agent Runner (`agentRunner.js`)
-- Executes CLI agent (bob/claude/codex)
-- Passes review prompt and workspace
-- Captures structured output
-- Handles timeouts and errors
+```bash
+npm run api
+```
 
-### 4. Review Parser (`reviewParser.js`)
-- Parses JSON output between markers
-- Validates required fields
-- Filters unverified Carbon claims
-- Counts findings by severity
+Starts a lightweight HTTP server on port 3000 (configurable via `API_PORT`). Intended for cloud deployments where the process runs continuously and needs a way to receive token refreshes without a restart.
 
-### 5. Review Prompt (`reviewPrompt.js`)
-- Formats spec-compliant comments
-- Structures findings by severity
-- Includes verification sources
-- Adds metadata (agent, commit, counts)
+Endpoints (all except `/api/health` require `Authorization: Bearer <API_SECRET>`):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/health` | Health check — no auth required |
+| `GET` | `/api/config` | Current configuration (sanitised) |
+| `GET` | `/api/mcp/status` | Carbon MCP connection status |
+| `POST` | `/api/mcp/refresh` | Push a new IBM JWT token into Bob's MCP config |
+| `POST` | `/api/review/trigger` | Manually trigger a review run |
+
+Configure the API server in `.env`:
+
+```bash
+API_PORT=3000
+API_SECRET=your_secure_api_secret_here
+API_ENABLE_AUTH=true
+```
+
+---
 
 ## Output Format
 
-The agent posts structured comments like:
+Each reviewed PR receives two types of comments:
 
-```markdown
-## 🤖 AI Review Summary
+### Inline comments (on specific diff lines)
 
-**Agent:** bob | **Commit:** abc123def | **Findings:** 5
+```
+**Missing aria-label on time picker select**
 
-### Summary
+> [blocking] Should be resolved before this ships.
 
-This PR introduces new Carbon components with accessibility improvements...
+<cds-time-picker-select> added in this diff has no aria-label attribute.
+Interactive select elements inside a composite component must have an
+accessible label. Add aria-label="Time zone" (or equivalent) to the element.
 
-### Findings by Severity
-
-#### 🔴 Critical (1)
-- **Missing ARIA label** (Line 45)
-  - Severity: critical
-  - Message: Button lacks accessible label
-  - Verification: carbon_builder
-
-#### 🟡 Medium (3)
-- **Inconsistent spacing** (Line 78)
-  - Severity: medium
-  - Message: Should use Carbon spacing tokens
-  - Verification: carbon_mcp
-
-#### 🟢 Low (1)
-- **Documentation update needed** (Line 120)
-  - Severity: low
-  - Message: Add JSDoc comments
+*✓ Verified with Carbon Builder + MCP*
 ```
 
-## Carbon Verification
+### Summary comment (PR issue comment)
 
-**Current Status:** The agent is configured for Carbon MCP globally at `~/.bob/settings/mcp.json`
+```
+[AI agent review — Carbon grounded] · **Consider Revising**
 
-### What This Means
+Reviewed by: bob · Commit: a1b2c3d
+Carbon verification: Carbon-specific claims require Carbon Builder and Carbon MCP verification.
 
-- **Infrastructure Ready**: MCP configuration files are created for each review
-- **Filtering Active**: Unverified Carbon claims are filtered out
-- **Verification**: Agents verify Carbon claims through globally configured Carbon MCP server
+## Recommendation
 
-### Current Behavior
+1 blocking finding: "Missing aria-label on time picker select"
 
-The agent will:
-1. Create MCP configuration files in review bundles
-2. Instruct agents to verify Carbon claims
-3. Filter out unverified Carbon-specific findings
-4. Only post generic code quality findings
+There are issues in this PR that should be addressed before merging. ...
 
-### Workaround for Testing
+## Findings
 
-To allow unverified findings through (testing only):
+| Area       | Category | Severity | Finding                                  | File                    |
+|------------|----------|----------|------------------------------------------|-------------------------|
+| General    | Cat 2    | blocking | Missing aria-label on time picker select | src/components/...      |
+| Carbon API | Cat 1    | minor    | menu-alignment on wrong element          | src/components/...      |
+
+## Summary
+
+This PR updates the time picker Figma Code Connect mappings. 1 blocking finding: ...
+
+Review artifacts:
+- PR: #12345
+- Commit: a1b2c3d
+- Agent: bob
+- Inline comments: 1
+- Summary findings: 1
+
+---
+**Estimated Token Usage:**
+- Input tokens: ~8,400
+- Output tokens: ~2,100
+- Total tokens: ~10,500
+```
+
+### Recommendation values
+
+| Value | Meaning |
+|-------|---------|
+| `Consider Revising` | One or more `blocking` findings, or two or more `major` findings |
+| `Suggested Improvements` | Any `major` or `minor` finding, or review reliability was uncertain |
+| `Looks Good` | `nit`-level findings only, or no findings |
+
+### Finding severities
+
+| Severity | Meaning |
+|----------|---------|
+| `blocking` | Breaks user-facing behaviour or violates an accessibility requirement |
+| `major` | Likely to cause a visible rendering difference or runtime error |
+| `minor` | Maintainability risk or subtle behaviour difference — not immediately breaking |
+| `nit` | Convention / hygiene — no functional consequence |
+
+---
+
+## Review Reliability
+
+The parser checks for two signals in the agent's output before the JSON block:
+
+- **Catalogue present** — at least one `[file:line] — ... — pending`, `NO-FINDINGS`, or `SKIP` line must appear. If absent, the agent skipped Step 1 and the review is flagged as unreliable (`catalogueWarning` is set in the comment).
+- **Step 2 visible** — pending catalogue items must be resolved with `confirmed finding` or `discarded: [reason]` lines in the visible response. If pending items appear but no resolutions do, the run is treated the same as a missing catalogue.
+
+An unreliable run still posts a comment but sets the recommendation to `Suggested Improvements` and includes a prominent warning note.
+
+---
+
+## Deployment
+
+Carbon Monitor is designed to run as a scheduled job in the cloud. The intended setup is:
+
+1. Deploy the Node process to a cloud environment.
+2. Run `npm start` on a schedule (cron or a scheduler service) — e.g. daily at 03:00.
+3. Use the API server (`npm run api`) alongside it to accept token refresh requests without restarting the process.
+
+The CI/CD safety check in `index.js` skips execution when `TRAVIS_BRANCH` is set to anything other than `main`, preventing accidental reviews from feature branch CI runs.
+
+### Docker
 
 ```bash
-GITHUB_AI_AGENT_SKIP_CARBON_FILTER=true npm start
+# Build and run
+docker-compose up -d
+
+# Or without Compose
+docker build -t carbon-monitor .
+docker run -d --name carbon-monitor --env-file .env carbon-monitor
+
+# Logs
+docker-compose logs -f
+# or
+docker logs -f carbon-monitor
 ```
 
-### Full Details
-
-See [`docs/CARBON_VERIFICATION_STATUS.md`](docs/CARBON_VERIFICATION_STATUS.md) for:
-- Current limitations
-- What needs to be built
-- Recommended path forward
-- How to test without Carbon MCP
-
-## Comparison to Original A11y System
-
-| Feature | Original A11y | Carbon Port |
-|---------|--------------|-------------|
-| Repositories | 11 IBM repos | 1 (Carbon) |
-| AI Backend | WatsonX API | CLI agents |
-| Code Size | 1072 lines | 213 lines |
-| Architecture | Monolithic | Modular (6 files) |
-| Metadata | Extensive | Minimal |
-| Performance | 18-42 min | 2.5-5 min |
-
-See [`docs/CARBON_PORT_COMPARISON.md`](docs/CARBON_PORT_COMPARISON.md) for detailed comparison.
-
-## Recent Fixes
-
-### Token Usage Tracking (2026-06-08)
-
-Added automatic token usage estimation for each PR review:
-- Calculates approximate input/output token counts
-- Displays estimates in PR review comments
-- Helps with cost tracking and capacity planning
-- Uses 1 token ≈ 4 characters heuristic
-
-See [`docs/TOKEN_USAGE_TRACKING.md`](docs/TOKEN_USAGE_TRACKING.md) for details.
-
-### JSON Truncation Handling (2026-06-05)
-
-Fixed issue where Bob's review output was being truncated mid-JSON, causing parse errors:
-```
-❌ Error parsing review output: Unterminated string in JSON at position 8165
-```
-
-**Solution:** Enhanced `reviewParser.js` with intelligent JSON repair that:
-- Detects truncation and finds the last complete finding
-- Properly handles escaped quotes and nested structures
-- Gracefully falls back to empty findings array if needed
-- Recovers maximum findings from partial output
-
-See [`docs/JSON_TRUNCATION_FIX.md`](docs/JSON_TRUNCATION_FIX.md) for technical details.
+---
 
 ## Troubleshooting
 
-### Agent Not Found
+### Bob not found in PATH
 ```bash
-# Check if agent is installed
+npm install -g bobshell
 which bob
-which claude
-which codex
-
-# Install if missing
-npm install -g @ibm/bob-shell
 ```
 
-### API Key Issues
+### Carbon MCP not connected
 ```bash
-# Verify environment variables
-echo $BOBSHELL_API_KEY
-echo $ANTHROPIC_API_KEY
-
-# Check .env file
-cat .env
+bob mcp list
+# Should show: ✓ carbon-mcp (streamable-http) - Connected
+# If not connected, check ~/.bob/settings/mcp.json and verify your JWT token is valid
 ```
 
-### GitHub Token Permissions
-Ensure your token has:
-- `repo` scope (full repository access)
-- `write:discussion` (for comments)
+### IBM JWT token expired
+The Carbon MCP connection uses an IBM JWT that expires periodically. While running on IBM network/VPN:
+1. Obtain a fresh token
+2. Update `~/.bob/settings/mcp.json` with the new token, or call `POST /api/mcp/refresh` if the API server is running
 
-### Bob Cloudflare Blocking
-Bob Shell requires IBM office/VPN access. If blocked:
-- Use Claude instead (`GITHUB_AI_AGENT_CLI=claude`)
-- Or connect to IBM VPN
+### Bob requires IBM network
+Bob Shell requires IBM office network or VPN access. If you're seeing Cloudflare errors, connect to IBM VPN and retry.
+
+### No PRs to review
+This is expected when all open PRs already have the `AIReviewed` label, or no PRs were opened within the `DAYS_BACK` window.
+
+### Keep artifacts for debugging
+```bash
+GITHUB_AI_AGENT_KEEP_ARTIFACTS=true npm start
+```
+The bundle directory path is printed to the console. It contains `agent-output.txt` (Bob's full response) and `agent-stderr.txt`.
+
+---
 
 ## Development
 
-### Project Structure
-```
-Carbon-Monitor/
-└── src/
-    ├── index.js           # Main entry point, orchestrates workflow
-    ├── githubClient.js    # GitHub API wrapper
-    ├── reviewBundle.js    # Temp workspace management
-    ├── agentRunner.js     # CLI agent execution
-    ├── reviewParser.js    # JSON parsing and validation
-    └── reviewPrompt.js    # Comment formatting
-```
+### Adding review rubric checks
 
-### Adding New Features
+The review prompt in [`src/reviewPrompt.js`](src/reviewPrompt.js) (`buildReviewPrompt`) contains the full 15-check rubric Bob follows. Adding a new check means appending a numbered rule to the prompt — no other files need to change.
 
-1. **New CLI Agent Support**
-   - Add to `agentRunner.js`
-   - Update environment validation
-   - Test with sample PR
+### Changing the comment format
 
-2. **Custom Review Rules**
-   - Edit `reviewBundle.js`
-   - Add rules to `.roo/rules/` directory
-   - Update prompt template
+Summary comment rendering is in [`formatSummaryComment`](src/reviewPrompt.js) and inline comment rendering in [`formatInlineComment`](src/reviewPrompt.js).
 
-3. **Additional Metadata**
-   - Modify `githubClient.js`
-   - Add new GitHub API calls
-   - Update comment format
+### Adjusting finding filters
+
+`reviewParser.js` contains `filterUnverifiedCarbonFindings` and `computeRecommendation`. The recommendation logic is in `computeRecommendation` starting at line 681.
+
+---
 
 ## License
 
 Apache-2.0
-
-## Support
-
-For issues or questions:
-1. Check [`docs/AGENTIC_CARBON_PR_REVIEW_PORT_SPEC.md`](docs/AGENTIC_CARBON_PR_REVIEW_PORT_SPEC.md)
-2. Review [`docs/CARBON_PORT_COMPARISON.md`](docs/CARBON_PORT_COMPARISON.md)
-3. Open an issue in the repository
-
-## Credits
-
-Based on the IBM Accessibility PR review system, adapted for Carbon Design System with modular architecture and CLI agent support.

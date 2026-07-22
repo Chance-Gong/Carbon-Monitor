@@ -1,12 +1,13 @@
-# Carbon-Monitor - Quick Start Guide
+# Carbon Monitor — Quick Start
 
-Get Carbon-Monitor running in 5 minutes!
+Get Carbon Monitor running in 5 minutes.
 
 ## Prerequisites
 
 - Node.js >= 18.0.0
-- GitHub account with access to carbon-design-system/carbon
-- One of: Bob Shell, Claude CLI, or Codex CLI
+- GitHub personal access token (repo + write:discussion scopes)
+- Bob Shell CLI (IBM network or VPN required)
+- Access to the Carbon MCP streamable-HTTP endpoint
 
 ## Step 1: Install Dependencies
 
@@ -18,40 +19,35 @@ npm install
 ## Step 2: Configure Environment
 
 ```bash
-# Copy example environment file
 cp .env.example .env
-
-# Edit .env with your credentials
-nano .env  # or use your preferred editor
 ```
 
-Required configuration:
+Required variables:
+
 ```bash
-GITHUB_AI_AGENT_TOKEN=ghp_your_token_here
-GITHUB_AI_AGENT_CLI=bob  # or claude or codex
-BOBSHELL_API_KEY=your_key_here  # if using bob
+GITHUB_AI_AGENT_TOKEN=ghp_your_github_token_here
+GITHUB_AI_AGENT_CLI=bob
+BOBSHELL_API_KEY=your_bob_api_key_here
 ```
 
-## Step 3: Install CLI Agent
-
-Choose one:
-
-### Option A: Bob Shell (IBM Network/VPN required)
+## Step 3: Install Bob Shell
 
 ```bash
 npm install -g bobshell
-or 
-npm install -g bob-cli
 bob --version
 ```
 
-Trust the directories Bob Shell needs for MCP tool access:
+Trust the directories Bob needs for MCP tool access:
+
 ```bash
 bob trust /private/tmp
 bob trust /path/to/Carbon-Monitor
 ```
 
-Configure Carbon MCP by creating `~/.bob/settings/mcp.json`:
+## Step 4: Configure Carbon MCP
+
+Carbon Monitor uses Carbon MCP over streamable HTTP. Create `~/.bob/settings/mcp.json`:
+
 ```json
 {
   "mcpServers": {
@@ -67,189 +63,115 @@ Configure Carbon MCP by creating `~/.bob/settings/mcp.json`:
 }
 ```
 
-Verify MCP is connected:
+Verify it is connected:
+
 ```bash
 bob mcp list
-# Should show: ✓ carbon-mcp (streamable-http) - Connected
+# Expected: ✓ carbon-mcp (streamable-http) - Connected
 ```
 
-### Option B: Claude (Works Anywhere)
-```bash
-npm install -g @anthropic-ai/claude-cli
-```
-
-### Option C: Codex
-```bash
-npm install -g openai-codex-cli
-```
-
-## Step 4: Test the Setup
+## Step 5: Test the Setup
 
 ```bash
 npm test
 ```
 
-This will:
-- ✅ Verify environment variables
-- ✅ Check API keys
-- ✅ Test agent availability
-- ✅ Test GitHub connection
-- ✅ Run a test review
-
-## Step 5: Run the Agent
+## Step 6: Run
 
 ```bash
 npm start
 ```
 
-The agent will:
-1. Fetch open PRs without `AIReviewed` label
-2. Review each PR using your chosen CLI agent
-3. Post structured comments with findings
-4. Add `AIReviewed` label
-5. Clean up temporary files
+Carbon Monitor will:
+1. Fetch open PRs without the `AIReviewed` label
+2. For each PR, build a temporary review workspace and run Bob
+3. Post inline comments on specific diff lines and a summary comment on the PR
+4. Add the `AIReviewed` label
+5. Clean up the temporary workspace
 
-## Docker Deployment (Optional)
+---
 
-### Build and Run with Docker Compose
+## Docker Deployment
 
 ```bash
-# Build the image
-docker-compose build
-
-# Run the container
+# Build and run
 docker-compose up -d
 
 # View logs
 docker-compose logs -f
 
-# Stop the container
+# Stop
 docker-compose down
 ```
 
-### Build and Run with Docker
+Or without Compose:
 
 ```bash
-# Build the image
 docker build -t carbon-monitor .
-
-# Run the container
-docker run -d \
-  --name carbon-monitor \
-  --env-file .env \
-  carbon-monitor
-
-# View logs
+docker run -d --name carbon-monitor --env-file .env carbon-monitor
 docker logs -f carbon-monitor
-
-# Stop the container
-docker stop carbon-monitor
 ```
+
+---
 
 ## Troubleshooting
 
-### "Agent not found in PATH"
-
-Install the CLI agent:
+### "Bob not found in PATH"
 ```bash
-# For Bob
 npm install -g bobshell
-
-# For Claude
-npm install -g @anthropic-ai/claude-cli
+which bob
 ```
 
-### "GitHub token invalid"
-
-1. Go to GitHub Settings → Developer settings → Personal access tokens
-2. Create a fine-grained token with:
-   - Repository access: carbon-design-system/carbon
-   - Permissions: Contents (read), Pull requests (read/write), Issues (read/write)
+### "Carbon MCP not connected"
+Check `~/.bob/settings/mcp.json` and confirm your IBM JWT token is current. JWT tokens expire — refresh the token and update the `Authorization` header value.
 
 ### "Bob Shell Cloudflare blocking"
-
-Bob requires IBM office/VPN access. Either:
-- Connect to IBM VPN
-- Use Claude instead: `GITHUB_AI_AGENT_CLI=claude`
+Bob requires IBM office network or VPN. Connect to IBM VPN and retry.
 
 ### "No PRs to review"
+All open PRs already have the `AIReviewed` label, or no PRs were opened within the `DAYS_BACK` window (default: 21 days). This is expected behaviour.
 
-This is normal if:
-- All open PRs already have `AIReviewed` label
-- No PRs were created in the last 21 days
-- Repository has no open PRs
+### Keep artifacts for debugging
+```bash
+GITHUB_AI_AGENT_KEEP_ARTIFACTS=true npm start
+```
+The bundle directory is printed to the console and contains `agent-output.txt` and `agent-stderr.txt`.
 
-## Configuration Options
+---
 
-### Environment Variables
+## Configuration Reference
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `GITHUB_AI_AGENT_TOKEN` | ✅ | - | GitHub personal access token |
-| `GITHUB_AI_AGENT_CLI` | ✅ | - | CLI agent: bob, claude, or codex |
-| `GITHUB_AI_AGENT_OWNER` | ❌ | carbon-design-system | Repository owner |
-| `GITHUB_AI_AGENT_REPO` | ❌ | carbon | Repository name |
-| `GITHUB_AI_AGENT_MAX_PRS` | ❌ | 5 | Max PRs to review per run |
-| `GITHUB_AI_AGENT_DAYS_BACK` | ❌ | 21 | How far back to look for PRs |
-| `GITHUB_AI_AGENT_REVIEW_LABEL` | ❌ | AIReviewed | Label to add after review |
-| `BOBSHELL_API_KEY` | ⚠️ | - | Required if using Bob |
-| `ANTHROPIC_API_KEY` | ⚠️ | - | Required if using Claude |
+| `GITHUB_AI_AGENT_TOKEN` | ✅ | — | GitHub personal access token |
+| `BOBSHELL_API_KEY` | ✅ | — | Bob Shell API key |
+| `GITHUB_AI_AGENT_OWNER` | ❌ | `carbon-design-system` | Repository owner |
+| `GITHUB_AI_AGENT_REPO` | ❌ | `carbon` | Repository name |
+| `GITHUB_AI_AGENT_CLI` | ❌ | `codex` | Must be set to `bob` |
+| `GITHUB_AI_AGENT_MAX_PRS` | ❌ | `5` | Max PRs reviewed per run |
+| `GITHUB_AI_AGENT_DAYS_BACK` | ❌ | `21` | How far back to look for PRs (days) |
+| `GITHUB_AI_AGENT_MAX_DIFF_CHARS` | ❌ | `120000` | Diff truncation limit |
+| `GITHUB_AI_AGENT_REVIEW_LABEL` | ❌ | `AIReviewed` | Label added after review |
+| `GITHUB_AI_AGENT_POST_INLINE_COMMENTS` | ❌ | `true` | Post inline diff comments |
+| `GITHUB_AI_AGENT_POST_SUMMARY_COMMENT` | ❌ | `true` | Post summary issue comment |
+| `GITHUB_AI_AGENT_KEEP_ARTIFACTS` | ❌ | `false` | Keep temp bundle for debugging |
+| `API_PORT` | ❌ | `3000` | API server port (`npm run api` only) |
+| `API_SECRET` | ❌ | — | API server bearer token |
+| `API_ENABLE_AUTH` | ❌ | `true` | Enable API server authentication |
 
-### Scheduling (Cron)
+---
 
-To run the agent automatically:
+## Scheduling (Cron)
 
 ```bash
-# Edit crontab
 crontab -e
 
-# Add line to run every hour
-0 * * * * cd /path/to/Carbon-Monitor && npm start >> /var/log/carbon-monitor.log 2>&1
-
-# Or run every 6 hours
-0 */6 * * * cd /path/to/Carbon-Monitor && npm start >> /var/log/carbon-monitor.log 2>&1
+# Run daily at 03:00
+0 3 * * * cd /path/to/Carbon-Monitor && npm start >> /var/log/carbon-monitor.log 2>&1
 ```
 
-## Next Steps
+---
 
-1. **Review First Results** - Check the comments posted by the agent
-2. **Adjust Configuration** - Tune `MAX_PRS` and `DAYS_BACK` as needed
-3. **Set Up Scheduling** - Automate with cron or CI/CD
-4. **Monitor Performance** - Track review quality and response times
-5. **Customize Rules** - Add Carbon-specific review rules in `reviewBundle.js`
+## Full Documentation
 
-## Support
-
-- 📖 Full documentation: [`README.md`](README.md)
-- 📋 Specification: [`docs/AGENTIC_CARBON_PR_REVIEW_PORT_SPEC.md`](docs/AGENTIC_CARBON_PR_REVIEW_PORT_SPEC.md)
-- 📊 Comparison: [`docs/CARBON_PORT_COMPARISON.md`](docs/CARBON_PORT_COMPARISON.md)
-
-## Example Output
-
-When the agent reviews a PR, it posts a comment like:
-
-```markdown
-## 🤖 AI Review Summary
-
-**Agent:** bob | **Commit:** abc123def | **Findings:** 5
-
-### Summary
-
-This PR introduces new Carbon components with accessibility improvements...
-
-### Findings by Severity
-
-#### 🔴 Critical (1)
-- **Missing ARIA label** (Line 45)
-  - Severity: critical
-  - Message: Button lacks accessible label
-  - Verification: carbon_builder
-
-#### 🟡 Medium (3)
-- **Inconsistent spacing** (Line 78)
-  - Severity: medium
-  - Message: Should use Carbon spacing tokens
-  - Verification: carbon_mcp
-```
-
-Happy reviewing! 🚀
+See [`README.md`](README.md) for the complete architecture reference, output format details, and development guide.
