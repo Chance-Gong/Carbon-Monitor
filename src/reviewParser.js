@@ -371,8 +371,15 @@ function parseReviewOutput(agentOutput) {
   const skillFilesRead = extractCarbonBuilderSkillReads(agentOutput);
 
   try {
-    // Find JSON markers
-    const jsonStart = agentOutput.indexOf('BEGIN_REVIEW_JSON');
+    // Find JSON markers — search for BEGIN_REVIEW_JSON immediately followed by
+    // optional whitespace and '{', which is the only form that precedes real JSON.
+    // The prompt text contains the bare marker as a literal, and the
+    // attempt_completion echo contains it followed by prose — neither is followed
+    // by '{'. This makes the match unambiguous regardless of marker count or order.
+    const jsonStartMatch = agentOutput.match(/BEGIN_REVIEW_JSON\s*\{/);
+    const jsonStart = jsonStartMatch
+      ? agentOutput.indexOf(jsonStartMatch[0])
+      : agentOutput.lastIndexOf('BEGIN_REVIEW_JSON'); // fallback for unexpected formats
 
     // Detect whether the agent wrote a visible catalogue before the JSON.
     // A legitimate run will have at least one SKIP, NO-FINDINGS, or catalogue
@@ -388,6 +395,35 @@ function parseReviewOutput(agentOutput) {
     //   - SKIP:          SKIP file.ts — fixture
     const preJson = jsonStart !== -1 ? agentOutput.slice(0, jsonStart) : agentOutput;
     const hasCatalogue = /^`?(-\s+)?(SKIP |NO-FINDINGS |\[.+?\]\s*—|\S+\.\S*\s*—)/m.test(preJson);
+
+    // Detect whether Step 2 resolutions were written visibly.
+    // hasPendingItems: true when any catalogue line ends with "— Category N — pending"
+    // (scoped regex avoids false positives from PR description text containing "pending").
+    const hasPendingItems = /—\s*Category\s*\d\s*—\s*pending/i.test(preJson);
+
+    // step2Window: the slice of preJson after the last catalogue line — this is
+    // exclusively agent Step 2 output and cannot contain prompt text, preventing
+    // false positives from the prompt's own "confirmed finding" / "discarded:" literals.
+    const lastCatalogueMatches = preJson.match(
+      /^.*(?:—\s*Category\s*\d\s*—\s*pending|NO-FINDINGS\s+\S|SKIP\s+\S).*$/gim
+    );
+    const lastCatalogueEntry = lastCatalogueMatches
+      ? lastCatalogueMatches[lastCatalogueMatches.length - 1]
+      : null;
+    const lastCatalogueEnd = lastCatalogueEntry !== null
+      ? preJson.lastIndexOf(lastCatalogueEntry) + lastCatalogueEntry.length
+      : -1;
+    const step2Window = lastCatalogueEnd !== -1 ? preJson.slice(lastCatalogueEnd) : '';
+
+    // hasResolutions: true when at least one visible resolution line appears after
+    // the last catalogue entry, or when there were no pending items to resolve.
+    const hasResolutions = hasPendingItems
+      ? /\b(confirmed finding|discarded:)/i.test(step2Window)
+      : true;
+
+    // hasStep2: false signals a collapsed-thinking run where pending items were
+    // never visibly resolved — treat as unreliable, same as hasCatalogue=false.
+    const hasStep2 = !hasPendingItems || hasResolutions;
     
     if (jsonStart === -1) {
       // Check if Bob called attempt_completion with a prose summary instead of
@@ -442,6 +478,16 @@ function parseReviewOutput(agentOutput) {
       jsonStr = repairTruncatedJSON(jsonStr);
     }
     
+    // Strip leading '+' diff prefixes — these appear when the agent writes the
+    // JSON to a file via write_to_file and the tool echoes a unified diff to
+    // stdout. Every line in the diff output is prefixed with '+', which makes
+    // JSON.parse fail. Strip the prefix when every non-empty line starts with '+'.
+    const nonEmptyLines = jsonStr.split('\n').filter(l => l.trim().length > 0);
+    if (nonEmptyLines.length > 0 && nonEmptyLines.every(l => l.startsWith('+'))) {
+      jsonStr = jsonStr.split('\n').map(l => l.startsWith('+') ? l.slice(1) : l).join('\n');
+      console.warn('⚠️  Stripped write_to_file diff prefixes from JSON output');
+    }
+
     // Additional cleanup: remove any leading/trailing non-JSON content
     // Look for the first '{' and last '}'
     const firstBrace = jsonStr.indexOf('{');
@@ -458,7 +504,48 @@ function parseReviewOutput(agentOutput) {
     
     // Parse JSON
     const review = JSON.parse(jsonStr);
-    
+
+    // ── Schema normalisation ────────────────────────────────────────────────
+    // The agent occasionally emits a non-standard schema (e.g. after using
+    // write_to_file): severity uses "error"/"warning", fields are named
+    // "message"/"description" instead of "title"/"body", and summaryMarkdown
+    // is absent. Normalise these to the canonical schema before validation so
+    // the review is recoverable rather than silently dropped.
+
+    // 1. Synthesise summaryMarkdown when absent
+    if (!review.summaryMarkdown && Array.isArray(review.findings)) {
+      const count = review.findings.length;
+      review.summaryMarkdown = count > 0
+        ? `PR review produced ${count} finding(s). summaryMarkdown was absent from agent output — normalised by parser.`
+        : 'No findings. summaryMarkdown was absent from agent output — normalised by parser.';
+      console.warn('⚠️  summaryMarkdown absent — synthesised from finding count');
+    }
+
+    // 2. Normalise per-finding fields
+    const SEVERITY_MAP = { error: 'blocking', warning: 'major', info: 'minor', hint: 'nit' };
+    if (Array.isArray(review.findings)) {
+      for (const f of review.findings) {
+        // severity: "error" → "blocking", "warning" → "major", etc.
+        if (f.severity && SEVERITY_MAP[f.severity]) {
+          console.warn(`⚠️  Normalised severity "${f.severity}" → "${SEVERITY_MAP[f.severity]}"`);
+          f.severity = SEVERITY_MAP[f.severity];
+        }
+        // title: prefer "title", fall back to "message"
+        if (!f.title && f.message) {
+          f.title = f.message;
+        }
+        // body: prefer "body", fall back to "description", then "suggestion"
+        if (!f.body) {
+          f.body = [f.description, f.suggestion].filter(Boolean).join(' ') || '';
+        }
+        // carbonVerified: default false when absent
+        if (typeof f.carbonVerified !== 'boolean') {
+          f.carbonVerified = f.verificationSource === 'carbon-mcp' || f.verificationSource === 'carbon-builder';
+        }
+      }
+    }
+    // ── End schema normalisation ────────────────────────────────────────────
+
     // Validate required fields
     if (!review.summaryMarkdown || typeof review.summaryMarkdown !== 'string') {
       console.error('❌ Invalid review: missing or invalid summaryMarkdown');
@@ -513,22 +600,26 @@ function parseReviewOutput(agentOutput) {
     // filterUnverifiedCarbonFindings and hasCatalogue are set. ─────────────
     const { recommendation, recommendationRationale } = computeRecommendation(
       review.findings,
-      { hasCatalogue, verificationStats: review.verificationStats }
+      { hasCatalogue, hasStep2, verificationStats: review.verificationStats }
     );
     review.recommendation = recommendation;
     review.recommendationRationale = recommendationRationale;
 
-    // Catalogue warning — moved out of summaryMarkdown so callers never mutate
-    // that field. formatSummaryComment renders this in its own block.
-    review.catalogueWarning = hasCatalogue
-      ? null
-      : 'No file catalogue was found in this review\'s output. The agent may have skipped Step 1 analysis. Zero findings here cannot be confirmed as a clean review — re-running is recommended.';
+    // Catalogue warning — three-way check:
+    //   1. No catalogue at all (Step 1 skipped)
+    //   2. Pending items exist but no visible resolutions (Step 2 collapsed into thinking)
+    //   3. Clean run — no warning
+    review.catalogueWarning = !hasCatalogue
+      ? 'No file catalogue was found in this review\'s output. The agent may have skipped Step 1 analysis. Zero findings here cannot be confirmed as a clean review — re-running is recommended.'
+      : !hasStep2
+        ? 'Pending catalogue items were detected but no Step 2 resolution lines were visible in the agent output — resolutions may have been collapsed into thinking blocks. Findings here may be incomplete — re-running is recommended.'
+        : null;
 
     // Build findingsTable — typed array of objects, never Markdown strings.
     // formatSummaryComment renders this as a Markdown table; agent never touches pipes.
     review.findingsTable = review.findings.map(f => ({
-      area: f.verificationSource === 'carbon-mcp' ? 'Carbon API' : 'General',
-      category: f.verificationSource === 'carbon-mcp' ? 'Cat 1' : 'Cat 2',
+      area: (f.verificationSource === 'carbon-mcp' || f.verificationSource === 'carbon-builder') ? 'Carbon API' : 'General',
+      category: (f.verificationSource === 'carbon-mcp' || f.verificationSource === 'carbon-builder') ? 'Cat 1' : 'Cat 2',
       severity: f.severity,
       title: f.title,
       file: f.file
@@ -587,7 +678,7 @@ function parseReviewOutput(agentOutput) {
  * @param {Object}  opts.verificationStats - { carbonSpecific, carbonVerified, ... }
  * @returns {{ recommendation: string, recommendationRationale: string }}
  */
-function computeRecommendation(findings, { hasCatalogue, verificationStats = {} }) {
+function computeRecommendation(findings, { hasCatalogue, hasStep2 = true, verificationStats = {} }) {
   const counts = countBySeverity(findings);
 
   // Rule 1 — no catalogue: review reliability is unknown
@@ -596,6 +687,15 @@ function computeRecommendation(findings, { hasCatalogue, verificationStats = {} 
       recommendation: 'suggested-improvements',
       recommendationRationale:
         'Review reliability is uncertain — no Step 1 file catalogue was detected in the agent output.'
+    };
+  }
+
+  // Rule 1b — catalogue present but Step 2 collapsed into thinking
+  if (!hasStep2) {
+    return {
+      recommendation: 'suggested-improvements',
+      recommendationRationale:
+        'Review reliability is uncertain — pending catalogue items were not visibly resolved. Step 2 may have been collapsed into thinking blocks.'
     };
   }
 

@@ -126,7 +126,7 @@ function formatSummaryComment({
 
   let comment = `[AI agent review — Carbon grounded] · **${recLabel}**\n\n`;
   comment += `Reviewed by: ${agent} · Commit: ${commitSha.substring(0, 7)}\n`;
-  comment += `Carbon verification: Carbon Builder Skill connected · Carbon MCP connected.\n\n`;
+  comment += `Carbon verification: Carbon-specific claims require Carbon Builder and Carbon MCP verification.\n\n`;
 
   // ── Recommendation section ─────────────────────────────────────────────
   comment += `## Recommendation\n\n`;
@@ -205,6 +205,10 @@ function formatSummaryComment({
     comment += `\n*Note: Token estimates are approximate and based on character count (1 token ≈ 4 characters).*\n`;
   }
 
+  // ── AI disclaimer ────────────────────────────────────────────────────────
+  comment += `\n---\n\n`;
+  comment += `*An AI agent generated this review. Human review is advised before acting on any findings.*\n`;
+
   return comment;
 }
 
@@ -227,6 +231,8 @@ function buildReviewPrompt({ owner, repo }) {
 1. Write catalogue lines to your visible response (not inside <thinking>) — the parser checks for them.
 2. Do not call attempt_completion at any point — writing the JSON block between BEGIN_REVIEW_JSON and END_REVIEW_JSON markers IS the completion step.
 3. Do not end your response without the JSON block, even when findings is an empty array.
+4. After resolving each pending catalogue item, write a new visible line — either \`confirmed finding — [title]\` or \`discarded: [reason]\` — immediately after it. Do not rely on <thinking> to resolve pending items. A run where pending items appear in the catalogue but no resolution lines appear will be flagged as unreliable.
+5. Do not use write_to_file, write_file, or any file-writing tool at any point. Writing to a file does not satisfy the output contract — the JSON block must appear in your visible response text.
 
 ## Step 1 — Read and catalogue the diff (do this before forming any opinion)
 
@@ -287,7 +293,7 @@ In addition, for EVERY changed source file apply these rubric checks during the 
 10. **Unsafe ID / key fallback** — any new abstraction argument or JSX key prop that can produce an empty string or non-unique value across instances (e.g. \`id ?? ''\`, \`key={index}\` on reorderable lists) — **Category 2** (diff-visible, no MCP needed)
 11. **Breaking API change without deprecation** — a public export, required prop, or event name removed or renamed in the diff with no deprecation notice or migration comment — **Category 1** (verify the prior API contract via MCP before filing)
 12. **Icon name or size verification** — an icon name or size variant introduced or changed in the diff (e.g. \`Add16\`, \`<AddIcon size={20} />\`) — **Category 1** (verify the icon and size exist via MCP code_search with asset_type: "icon")
-13. **Test coverage gap** — For every changed source file, determine: does this diff introduce a new exported function, new public method, or clearly new runtime behaviour? If yes, check whether the "Changed Files" list contains a corresponding \`__tests__\`, \`.test.\`, or \`.spec.\` file for the changed source. If no test file is present AND new behaviour was introduced, this is a catalogue item. You may discard it only if you can quote a specific diff line showing the new code is covered by an existing inline test or the change is a pure refactoring with no new code paths. **Do not state that test files exist in the changed files list unless you have verified this by reading the "Changed Files" section of PR_REVIEW_REQUEST.md.**
+13. **Test coverage gap** — For every changed source file, determine: does this diff introduce a new exported function, new public method, or clearly new runtime behaviour? If yes, check whether the "Changed Files" list contains a corresponding \`__tests__\`, \`.test.\`, or \`.spec.\` file for the changed source. If no test file is present AND new behaviour was introduced, this is a catalogue item. You may discard it only if you can quote a specific diff line showing the new code is covered by an existing inline test or the change is a pure refactoring with no new code paths. **Do not state that test files exist in the changed files list unless you have verified this by reading the "Changed Files" section of PR_REVIEW_REQUEST.md.** When a test file is present, also verify that the suite containing the new test is not disabled — check both the diff context lines and hunk headers (\`@@ ... @@ xdescribe\`) surrounding the new test for \`xdescribe\`, \`xit\`, \`test.skip\`, or \`describe.skip\`; a disabled suite or test means the new test will never run and is not valid coverage.
 
 **Storybook play() functions count as interaction tests** — do not file a test-coverage finding solely because a separate \`__tests__\` file is absent when a \`play()\` block is present in the same diff covering the changed behaviour. This discard applies to the test-coverage concern only — it does not exempt the file from any other rubric check.
 
@@ -351,8 +357,10 @@ If Carbon MCP is unavailable or returns no usable response, DO NOT reclassify th
 
 Category 1 — Carbon API finding: about a Carbon component's props, tokens, variants, or accessibility patterns.
 - MUST verify with carbon-mcp tools before posting
-- Set: carbonVerified: true, verificationSource: "carbon-mcp"
-- mcpEvidence MUST be a direct quote from the tool response
+- Set: carbonVerified: true, mcpEvidence MUST be a direct quote from the tool response
+- verificationSource: set based on whether you read the Carbon Builder skill file first:
+  - "carbon-builder" — if you called read_file on .bob/skills/carbon-builder/SKILL.md (or any file under .bob/skills/carbon-builder/) before making MCP calls for this finding
+  - "carbon-mcp" — if you called MCP tools directly without reading the skill file first (skill unavailable or unread)
 - If MCP unavailable or tool call fails: omit the finding, do NOT reclassify it as not-carbon-specific
 
 Category 2 — Non-Carbon finding: generic correctness, accessibility, test coverage, or migration issue visible in the diff.
@@ -363,9 +371,11 @@ Category 2 — Non-Carbon finding: generic correctness, accessibility, test cove
 
 Exception for config/tooling files: if the finding is about whether a specific **attribute name** exists on a specific Carbon element (e.g. is \`direction\` a valid attribute on \`<cds-overflow-menu>\`?), it is always Category 1 regardless of whether a similar pattern could appear elsewhere — the correctness of the name depends entirely on Carbon's API.
 
-This exception does NOT apply to structural or output questions. A finding about two variant blocks emitting identical markup is always Category 2 — you can answer it by reading the diff, regardless of which file it appears in. Do not call MCP to ask whether an \`open\` prop exists in order to justify a duplicate-variant finding.
+This exception does NOT apply to structural or output questions. A finding about two variant blocks emitting identical markup is always Category 2 — you can answer it by reading the diff, regardless of which file it appears in. Do not call MCP to ask whether an \`open\` prop exists in order to justify a duplicate-variant finding. It also does not cover how an attribute should be bound — whether \`?attr\`, \`ifDefined\`, or a plain string binding is correct is a framework syntax question, not an attribute-name question, and is always Category 2.
 
-**Framework behaviour is always Category 2** regardless of which file it appears in: Lit lifecycle (@query, firstUpdated, updateComplete), React hooks, TypeScript types, event listeners, async patterns.
+**Framework behaviour is always Category 2** regardless of which file it appears in: Lit lifecycle (@query, firstUpdated, updateComplete), Lit template binding syntax (?attr boolean prefix, .prop property binding, @event listeners), React hooks, TypeScript types, event listeners, async patterns.
+
+**MCP cannot answer framework syntax questions.** Questions about whether \`?attr\`, \`.prop\`, \`ifDefined\`, or any other framework binding pattern is correct are not answerable from Carbon's API documentation or storybook examples — they depend entirely on the framework's own behaviour. Do not call MCP to verify framework or template binding syntax; resolve these from the diff alone as Category 2.
 
 **Do not call MCP tools speculatively on general source code.** Exception: for any file that references Carbon component APIs (e.g. \`.figma.ts\`, \`.stories.ts\`), verifying that an **attribute name** exists on the correct element is always a valid MCP call — do not wait for a "specific finding" before checking attribute placement in these files. This exception covers attribute-name and placement questions only — it does not cover duplicate-variant or missing-aria-label findings, which are always Category 2.
 
@@ -440,8 +450,8 @@ verificationSource values:
 
 findingsTable rules:
 - One entry per confirmed finding (mirrors the findings array)
-- area: "Carbon API" for carbon-mcp findings, "General" for not-carbon-specific findings
-- category: "Cat 1" for carbon-mcp findings, "Cat 2" for not-carbon-specific findings
+- area: "Carbon API" for carbon-builder or carbon-mcp findings, "General" for not-carbon-specific findings
+- category: "Cat 1" for carbon-builder or carbon-mcp findings, "Cat 2" for not-carbon-specific findings
 - No Markdown formatting, no pipe characters, no newline characters in any field value
 - Empty array when there are no confirmed findings
 `;

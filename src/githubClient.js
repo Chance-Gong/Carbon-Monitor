@@ -73,13 +73,21 @@ function createGitHubClient(octokit) {
      */
     async fetchPRFiles({ owner, repo, pullNumber }) {
       try {
-        const { data: files } = await octokit.rest.pulls.listFiles({
-          owner,
-          repo,
-          pull_number: pullNumber,
-          per_page: 100
-        });
-        return files;
+        const allFiles = [];
+        let page = 1;
+        while (true) {
+          const { data: files } = await octokit.rest.pulls.listFiles({
+            owner,
+            repo,
+            pull_number: pullNumber,
+            per_page: 100,
+            page
+          });
+          allFiles.push(...files);
+          if (files.length < 100) break;
+          page++;
+        }
+        return allFiles;
       } catch (error) {
         console.error('Error fetching PR files:', error.message);
         throw error;

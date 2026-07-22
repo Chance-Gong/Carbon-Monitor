@@ -22,48 +22,156 @@ const TEST_OWNER = 'Chance-Gong';
 const TEST_REPO = 'carbon-pr-review-test';
 
 /**
- * Reconstruct file content from a GitHub PR file object.
- * Only works for added files — strips the leading '+' from each patch line.
- * Returns null for modified/deleted files or if no patch is available.
+ * Apply unified diff patch hunks to a base file string and return the patched content.
+ * Handles added (+), removed (-), and context lines. Ignores hunk headers (@@).
  *
- * @param {Object} file - GitHub PR file object with patch property
- * @returns {string|null}
+ * @param {string} baseContent - Original file content as a string
+ * @param {string} patch       - Unified diff patch string (from GitHub file.patch)
+ * @returns {string}           - Patched file content
  */
-function extractFileContent(file) {
-  if (!file.patch) return null;
-  if (file.status !== 'added') return null;
+function applyPatch(baseContent, patch) {
+  const baseLines = baseContent.split('\n');
+  const result = [];
+  let baseIdx = 0; // 0-based index into baseLines
 
-  const lines = file.patch.split('\n');
-  const contentLines = [];
+  const patchLines = patch.split('\n');
 
-  for (const line of lines) {
-    if (line.startsWith('@@')) continue;       // hunk header
-    if (line.startsWith('+')) {
-      contentLines.push(line.slice(1));        // added line — strip the '+'
+  for (const line of patchLines) {
+    if (line.startsWith('@@')) {
+      // @@ -oldStart,oldCount +newStart,newCount @@
+      const match = line.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      if (match) {
+        const oldStart = parseInt(match[1], 10) - 1; // convert to 0-based
+        // Flush unchanged lines between the previous hunk and this one
+        while (baseIdx < oldStart) {
+          result.push(baseLines[baseIdx]);
+          baseIdx++;
+        }
+      }
+      continue;
     }
+
+    if (line.startsWith('+')) {
+      result.push(line.slice(1)); // added line — keep, don't advance base
+    } else if (line.startsWith('-')) {
+      baseIdx++;                  // removed line — skip base, don't emit
+    } else if (line.startsWith(' ') || line === '') {
+      result.push(baseLines[baseIdx]); // context line — emit from base
+      baseIdx++;
+    }
+    // '\\ No newline at end of file' — ignore
   }
 
-  return contentLines.join('\n');
+  // Flush any remaining lines after the last hunk
+  while (baseIdx < baseLines.length) {
+    result.push(baseLines[baseIdx]);
+    baseIdx++;
+  }
+
+  return result.join('\n');
+}
+
+/**
+ * Reconstruct committed file content for a PR file.
+ *
+ * - added:    extract all '+' lines from the patch (no base needed).
+ * - modified: fetch base content from the source repo and apply the patch.
+ * - deleted:  skip — nothing to commit.
+ * - renamed:  treat like modified (patch reflects the content change).
+ *
+ * Returns null when the file should not be committed (deleted, no patch, or
+ * the base fetch failed and the patch is also absent).
+ *
+ * @param {Object} file       - GitHub PR file object
+ * @param {Object} octokit    - Authenticated Octokit instance
+ * @param {string} owner      - Source repo owner
+ * @param {string} repo       - Source repo name
+ * @param {string} baseSha    - Base commit SHA of the PR (pr.base.sha)
+ * @returns {Promise<string|null>}
+ */
+async function resolveFileContent(file, octokit, owner, repo, baseSha) {
+  if (file.status === 'deleted') return null;
+
+  // Added file: reconstruct entirely from the patch '+' lines
+  if (file.status === 'added') {
+    if (!file.patch) return null;
+    const lines = file.patch.split('\n');
+    const contentLines = [];
+    for (const line of lines) {
+      if (line.startsWith('@@')) continue;
+      if (line.startsWith('+')) contentLines.push(line.slice(1));
+    }
+    return contentLines.join('\n');
+  }
+
+  // Modified / renamed: fetch base content and apply patch
+  if (!file.patch) {
+    // GitHub omits the patch for files > 5,000 changed lines.
+    // We cannot reconstruct content without it — skip this file.
+    return null;
+  }
+
+  try {
+    const { data: baseFile } = await octokit.rest.repos.getContent({
+      owner,
+      repo,
+      path: file.previous_filename || file.filename,
+      ref: baseSha
+    });
+
+    if (baseFile.encoding !== 'base64' || !baseFile.content) return null;
+    const baseContent = Buffer.from(baseFile.content, 'base64').toString('utf8');
+    return applyPatch(baseContent, file.patch);
+  } catch {
+    // Base file not fetchable (e.g. very large file, permission, or binary).
+    // Fall back gracefully — file won't appear in the test branch diff.
+    return null;
+  }
 }
 
 /**
  * Build a unified diff string from all PR files for embedding in the test PR.
- * Used to preserve the real +/- diff for modified files that can't be
- * reconstructed as full files.
+ * Used as the canonical diff source for the review agent (ORIGINAL_DIFF.patch).
+ * Appends a visible truncation notice for files whose patch was omitted by GitHub.
  *
  * @param {Array} files - GitHub PR file objects
  * @returns {string} - Unified diff text
  */
 function buildOriginalDiff(files) {
-  return files
-    .filter(f => f.patch)
-    .map(f => {
-      const header = f.status === 'added'
-        ? `diff --git a/${f.filename} b/${f.filename}\nnew file mode 100644\n--- /dev/null\n+++ b/${f.filename}`
-        : `diff --git a/${f.filename} b/${f.filename}\n--- a/${f.filename}\n+++ b/${f.filename}`;
-      return `${header}\n${f.patch}`;
-    })
-    .join('\n\n');
+  const parts = [];
+
+  for (const f of files) {
+    if (f.status === 'deleted' && !f.patch) {
+      // Deleted file with no patch — emit a minimal deletion header so the
+      // agent knows the file was removed.
+      parts.push(
+        `diff --git a/${f.filename} b/${f.filename}\n` +
+        `deleted file mode 100644\n` +
+        `--- a/${f.filename}\n` +
+        `+++ /dev/null\n` +
+        `[... patch unavailable — file deleted, content not shown ...]`
+      );
+      continue;
+    }
+
+    if (!f.patch) {
+      // GitHub omitted the patch (file > 5,000 changed lines).
+      parts.push(
+        `diff --git a/${f.filename} b/${f.filename}\n` +
+        `--- a/${f.filename}\n` +
+        `+++ b/${f.filename}\n` +
+        `[... patch truncated — file has too many changes for GitHub API patch field. View full diff on the original repository ...]`
+      );
+      continue;
+    }
+
+    const header = f.status === 'added'
+      ? `diff --git a/${f.filename} b/${f.filename}\nnew file mode 100644\n--- /dev/null\n+++ b/${f.filename}`
+      : `diff --git a/${f.filename} b/${f.filename}\n--- a/${f.filename}\n+++ b/${f.filename}`;
+    parts.push(`${header}\n${f.patch}`);
+  }
+
+  return parts.join('\n\n');
 }
 
 /**
@@ -156,14 +264,28 @@ async function createTestPR(carbonPRNumber) {
       process.exit(1);
     }
 
-    // Step 6: Commit new source files at their real paths + original diff for modified files
+    // Step 6: Commit source files at their real paths so the test PR diff
+    // contains the actual changed lines — this makes inline comment positions valid.
+    // For modified files we fetch the base content from the Carbon repo and apply
+    // the patch hunks. Deleted files are skipped. Files whose patch was omitted by
+    // GitHub (>5,000 changed lines) fall back to ORIGINAL_DIFF.patch for review.
     console.log(`📝 Step 6: Committing source files...`);
+    const carbonBaseSha = carbonPR.base.sha;
 
     let committed = 0;
+    let skipped = 0;
     for (const file of files) {
-      const fileContent = extractFileContent(file);
+      const fileContent = await resolveFileContent(
+        file, octokit, CARBON_OWNER, CARBON_REPO, carbonBaseSha
+      );
       if (fileContent === null) {
-        console.log(`   ⏭️  Skipped (modified/no patch, covered by ORIGINAL_DIFF.patch): ${file.filename}`);
+        skipped++;
+        const reason = file.status === 'deleted'
+          ? 'deleted'
+          : !file.patch
+            ? 'patch omitted by GitHub (large file) — covered by ORIGINAL_DIFF.patch'
+            : 'base fetch failed — covered by ORIGINAL_DIFF.patch';
+        console.log(`   ⏭️  Skipped (${reason}): ${file.filename}`);
         continue;
       }
 
@@ -171,16 +293,16 @@ async function createTestPR(carbonPRNumber) {
         owner: TEST_OWNER,
         repo: TEST_REPO,
         path: file.filename,
-        message: `Add ${file.filename} from Carbon PR ${carbonPRNumber}`,
+        message: `${file.status === 'added' ? 'Add' : 'Update'} ${file.filename} from Carbon PR ${carbonPRNumber}`,
         content: Buffer.from(fileContent).toString('base64'),
         branch: branchName
       });
       committed++;
-      console.log(`   ✅ ${file.filename}`);
+      console.log(`   ✅ [${file.status}] ${file.filename}`);
     }
 
-    // Always commit the original diff and file list so the review runner can use
-    // them instead of GitHub's generated diff (which misses - lines for modified files)
+    // Always commit ORIGINAL_DIFF.patch and ORIGINAL_FILES.json so the review
+    // runner uses the real Carbon diff instead of the test repo's generated diff.
     const originalDiff = buildOriginalDiff(files);
     await octokit.rest.repos.createOrUpdateFileContents({
       owner: TEST_OWNER,
@@ -200,7 +322,8 @@ async function createTestPR(carbonPRNumber) {
       content: Buffer.from(filesJson).toString('base64'),
       branch: branchName
     });
-    console.log(`   ✅ ORIGINAL_DIFF.patch + ORIGINAL_FILES.json (${committed} new files + ${files.length - committed} modified)\n`);
+    console.log(`   ✅ ORIGINAL_DIFF.patch + ORIGINAL_FILES.json`);
+    console.log(`   📊 ${committed} file(s) committed, ${skipped} skipped\n`);
 
     // Step 7: Create PR
     console.log('🎯 Step 7: Creating PR...');
@@ -211,16 +334,13 @@ async function createTestPR(carbonPRNumber) {
         title: `[Test] ${carbonPR.title}`,
         head: branchName,
         base: baseBranch,
-        body: `# Test PR from Carbon Design System
+        body: `# Agent Review Test PR
 
-This is a test PR created from Carbon PR ${carbonPRNumber} for local review testing.
+This PR was created for local review agent testing. It mirrors a set of changes
+from the Carbon Design System monorepo.
 
-## Purpose
-This PR allows you to run the review agent locally and see comments/reviews in this test repository without affecting the Carbon repository.
-
-## Original PR Details
+## Details
 - **Title**: ${carbonPR.title}
-- **PR Number**: ${carbonPRNumber}
 - **Files Changed**: ${files.length}
 - **Changes**: +${carbonPR.additions}/-${carbonPR.deletions}
 
@@ -244,9 +364,6 @@ ${files.length > 5 ? `\n... and ${files.length - 5} more files` : ''}
 
 ## Cleanup
 After testing, you can safely delete this PR and branch.
-
----
-*Test PR based on Carbon Design System PR ${carbonPRNumber}*
 `
       });
 
