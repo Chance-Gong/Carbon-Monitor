@@ -29,11 +29,12 @@ function createGitHubClient(octokit) {
           per_page: 100
         });
 
-        // Filter out draft PRs and PRs that already have the review label
+        // Filter out PRs that should not be reviewed
         const filtered = prs.filter(pr => {
           if (pr.draft) return false;
           if (new Date(pr.created_at) < since) return false;
           if (pr.labels.some(l => l.name === label)) return false;
+          if (pr.user.type === 'Bot') return false;
           return true;
         });
 
